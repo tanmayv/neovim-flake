@@ -136,15 +136,16 @@ function M.render_ui()
       bufnr = M.buf_id,
       nodes = root_nodes,
       prepare_node = function(node)
-        local text = node.text
+        local NuiLine = require("nui.line")
+        local line = NuiLine()
         if node.is_category then
-          text = " " .. text
+          line:append(" " .. node.text, "Title")
         elseif not node.is_file then
-          text = "  " .. text .. "/"
+          line:append("  " .. node.text .. "/", "Directory")
         else
-          text = "    " .. text
+          line:append("    " .. node.text, "Normal")
         end
-        return text
+        return line
       end,
     })
   else
