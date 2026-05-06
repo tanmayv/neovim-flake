@@ -131,6 +131,7 @@ function M.render_ui()
 
   if not M.tree then
     M.tree = NuiTree({
+      bufnr = M.buf_id,
       nodes = root_nodes,
       prepare_node = function(node)
         local text = node.text
