@@ -150,7 +150,7 @@ function M.render_ui()
     M.tree:set_nodes(root_nodes)
   end
 
-  M.tree:render(M.buf_id)
+  M.tree:render()
 end
 
 function M.start_watcher()
