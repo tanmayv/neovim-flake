@@ -1,25 +1,3 @@
--- This file simply bootstraps the installation of Lazy.nvim and then calls other files for execution
--- This file doesn't necessarily need to be touched, BE CAUTIOUS editing this file and proceed at your own risk.
-local google_vim_config = "/usr/share/vim/google/glug/bootstrap.vim"
-
-if vim.fn.filereadable(google_vim_config) == 1 then
-  -- Source Google's default Vim configuration
-  -- This will also handle 'filetype plugin indent on'
-
-  vim.cmd("source " .. google_vim_config)
-
-  -- Load Google plugins using Glug
-  -- Add your desired Glug commands here
-  vim.cmd [[Glug relatedfiles]]
-  vim.cmd [[Glug codefmt]]
-  -- Example with options:
-  -- vim.cmd [[Glug relatedfiles plugin[mappings]]]
-
-  print "Google Vim settings and Glug plugins loaded."
-else
-  print("Google Vim config not found at " .. google_vim_config .. ", skipping.")
-end
-
 local lazypath = vim.env.LAZY or vim.fn.stdpath "data" .. "/lazy/lazy.nvim"
 
 if not (vim.env.LAZY or (vim.uv or vim.loop).fs_stat(lazypath)) then
