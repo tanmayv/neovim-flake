@@ -8,6 +8,7 @@ M.config = {
 M.active_session_files = {}
 M.buf_id = nil
 M.win_id = nil
+M.main_win_id = nil
 M.watcher = nil
 M.tab_id = nil
 M.tree = nil
@@ -218,6 +219,7 @@ function M.toggle_diff()
 
   vim.cmd("tabnew")
   M.tab_id = vim.api.nvim_get_current_tabpage()
+  M.main_win_id = vim.api.nvim_get_current_win()
 
   M.buf_id = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_option(M.buf_id, "filetype", "agent-observer")
@@ -233,7 +235,27 @@ function M.toggle_diff()
   local function open_file(mode)
     local node = M.tree:get_node()
     if node and node.is_file and node.path then
-      vim.cmd("wincmd h")
+      local target_win = M.main_win_id
+      
+      if not target_win or not vim.api.nvim_win_is_valid(target_win) then
+        local current_tab = vim.api.nvim_get_current_tabpage()
+        local wins = vim.api.nvim_tabpage_list_wins(current_tab)
+        for _, w in ipairs(wins) do
+          if w ~= M.win_id then
+            target_win = w
+            break
+          end
+        end
+      end
+
+      if not target_win or not vim.api.nvim_win_is_valid(target_win) then
+        vim.cmd("leftabove vsplit")
+        target_win = vim.api.nvim_get_current_win()
+        M.main_win_id = target_win
+      end
+
+      vim.api.nvim_set_current_win(target_win)
+
       if mode == "edit" then
         vim.cmd("edit " .. node.path)
       elseif mode == "split" then
@@ -241,8 +263,13 @@ function M.toggle_diff()
       elseif mode == "vsplit" then
         vim.cmd("vsplit " .. node.path)
       end
+      
       vim.bo.readonly = true
       vim.bo.modifiable = false
+      
+      if mode == "edit" then
+        vim.api.nvim_set_current_win(M.win_id)
+      end
     end
   end
 
