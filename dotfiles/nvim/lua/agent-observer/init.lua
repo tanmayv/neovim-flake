@@ -385,7 +385,7 @@ function M.toggle_diff()
     local Menu = require("nui.menu")
     
     local menu = Menu({
-      position = "center",
+      position = { row = "50%", col = "50%" },
       size = {
         width = 20,
         height = 3,
