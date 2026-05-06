@@ -8,6 +8,17 @@ M.active_session_files = {}
 M.buf_id = nil
 M.win_id = nil
 M.watcher = nil
+M.tab_id = nil
+M.tree = nil
+
+-- Helper to get git root
+local function get_git_root()
+  local handle = io.popen("git rev-parse --show-toplevel 2>/dev/null")
+  if not handle then return nil end
+  local result = handle:read("*l")
+  handle:close()
+  return result
+end
 
 local function get_git_status()
   local handle = io.popen("git status --porcelain")
@@ -34,47 +45,103 @@ local function get_git_last_commit()
   return result
 end
 
+-- Helper to build tree nodes from paths
+local function add_path_to_tree(root_nodes, path, category)
+  local NuiNode = require("nui.tree.node")
+  local parts = vim.split(path, "/")
+  local current_level = root_nodes
+
+  for i, part in ipairs(parts) do
+    local is_file = (i == #parts)
+    local found = false
+    for _, node in ipairs(current_level) do
+      if node.text == part and not node.is_file then
+        current_level = node:get_children()
+        found = true
+        break
+      end
+    end
+
+    if not found then
+      local new_node = NuiNode({
+        text = part,
+        is_file = is_file,
+        path = path,
+        category = category
+      })
+      table.insert(current_level, new_node)
+      if not is_file then
+        current_level = new_node:get_children()
+      end
+    end
+  end
+end
+
 function M.render_ui()
   if not M.buf_id or not vim.api.nvim_buf_is_valid(M.buf_id) then
     return
   end
 
-  local lines = { "=== Agent Observer ===", "" }
+  local NuiTree = require("nui.tree")
+  local NuiNode = require("nui.tree.node")
 
-  table.insert(lines, "--- Active Session ---")
-  if #M.active_session_files == 0 then
-    table.insert(lines, "  (No files touched yet)")
-  else
-    for _, file in ipairs(M.active_session_files) do
-      table.insert(lines, "  " .. file)
-    end
+  local root_nodes = {}
+
+  -- Active Session
+  local active_node = NuiNode({ text = "Active Session", is_category = true })
+  local active_children = {}
+  for _, file in ipairs(M.active_session_files) do
+    add_path_to_tree(active_children, file, "active")
   end
-  table.insert(lines, "")
+  for _, child in ipairs(active_children) do
+    active_node:append(child)
+  end
+  table.insert(root_nodes, active_node)
 
-  table.insert(lines, "--- Pending Changes ---")
+  -- Pending Changes
+  local pending_node = NuiNode({ text = "Pending Changes", is_category = true })
+  local pending_children = {}
   local pending = get_git_status()
-  if #pending == 0 then
-    table.insert(lines, "  (No pending changes)")
-  else
-    for _, file in ipairs(pending) do
-      table.insert(lines, "  " .. file)
-    end
+  for _, file in ipairs(pending) do
+    add_path_to_tree(pending_children, file, "pending")
   end
-  table.insert(lines, "")
+  for _, child in ipairs(pending_children) do
+    pending_node:append(child)
+  end
+  table.insert(root_nodes, pending_node)
 
-  table.insert(lines, "--- Last Commit ---")
+  -- Last Commit
+  local last_node = NuiNode({ text = "Last Commit", is_category = true })
+  local last_children = {}
   local last_commit = get_git_last_commit()
-  if #last_commit == 0 then
-    table.insert(lines, "  (No files in last commit)")
+  for _, file in ipairs(last_commit) do
+    add_path_to_tree(last_children, file, "last")
+  end
+  for _, child in ipairs(last_children) do
+    last_node:append(child)
+  end
+  table.insert(root_nodes, last_node)
+
+  if not M.tree then
+    M.tree = NuiTree({
+      nodes = root_nodes,
+      prepare_node = function(node)
+        local text = node.text
+        if node.is_category then
+          text = " " .. text
+        elseif not node.is_file then
+          text = "  " .. text .. "/"
+        else
+          text = "    " .. text
+        end
+        return text
+      end,
+    })
   else
-    for _, file in ipairs(last_commit) do
-      table.insert(lines, "  " .. file)
-    end
+    M.tree:set_nodes(root_nodes)
   end
 
-  vim.api.nvim_buf_set_option(M.buf_id, "modifiable", true)
-  vim.api.nvim_buf_set_lines(M.buf_id, 0, -1, false, lines)
-  vim.api.nvim_buf_set_option(M.buf_id, "modifiable", false)
+  M.tree:render(M.buf_id)
 end
 
 function M.start_watcher()
@@ -93,7 +160,6 @@ function M.start_watcher()
       return
     end
     
-    -- Filter out .git directory and the observer buffer itself
     if filename and not filename:match("^%.git/") then
       vim.schedule(function()
         -- Add to active session if not already there
@@ -107,6 +173,7 @@ function M.start_watcher()
         if not found then
           table.insert(M.active_session_files, 1, filename) -- prepend
         end
+        -- Re-render will fetch fresh git status and last commit
         M.render_ui()
       end)
     end
@@ -120,8 +187,6 @@ function M.stop_watcher()
   end
 end
 
-M.tab_id = nil
-
 function M.toggle_diff()
   if M.tab_id and vim.api.nvim_tabpage_is_valid(M.tab_id) then
     vim.api.nvim_set_current_tabpage(M.tab_id)
@@ -129,39 +194,56 @@ function M.toggle_diff()
     M.tab_id = nil
     M.win_id = nil
     M.buf_id = nil
+    M.tree = nil
     return
   end
 
-  -- Create a new tab
   vim.cmd("tabnew")
   M.tab_id = vim.api.nvim_get_current_tabpage()
 
-  -- Create scratch buffer for observer
   M.buf_id = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_option(M.buf_id, "filetype", "agent-observer")
 
-  -- Create vertical split on the right for the observer
   vim.cmd("botright 40vsplit")
   M.win_id = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(M.win_id, M.buf_id)
 
   M.render_ui()
 
-  -- Keymaps in the observer buffer
   local opts = { buffer = M.buf_id, noremap = true, silent = true }
   
-  -- Enter to open file
-  vim.keymap.set("n", "<CR>", function()
-    local line = vim.api.nvim_get_current_line()
-    local file = line:match("^%s+(.+)")
-    if file then
-      -- Move to the window on the left (the empty one created by tabnew)
+  local function open_file(mode)
+    local node = M.tree:get_node()
+    if node and node.is_file and node.path then
       vim.cmd("wincmd h")
-      -- Open the file
-      vim.cmd("edit " .. file)
-      -- Set as read-only but modifiable for streaming (Option B assumes support)
+      if mode == "edit" then
+        vim.cmd("edit " .. node.path)
+      elseif mode == "split" then
+        vim.cmd("split " .. node.path)
+      elseif mode == "vsplit" then
+        vim.cmd("vsplit " .. node.path)
+      end
       vim.bo.readonly = true
       vim.bo.modifiable = false
+    end
+  end
+
+  -- o or Enter to open in main pane
+  vim.keymap.set("n", "o", function() open_file("edit") end, opts)
+  vim.keymap.set("n", "<CR>", function() open_file("edit") end, opts)
+
+  -- s to open in horizontal split
+  vim.keymap.set("n", "s", function() open_file("split") end, opts)
+
+  -- v to open in vertical split
+  vim.keymap.set("n", "v", function() open_file("vsplit") end, opts)
+
+  -- l to expand/collapse
+  vim.keymap.set("n", "l", function()
+    local node = M.tree:get_node()
+    if node and not node.is_file then
+      node:toggle()
+      M.tree:render()
     end
   end, opts)
 
@@ -171,6 +253,7 @@ function M.toggle_diff()
     M.tab_id = nil
     M.win_id = nil
     M.buf_id = nil
+    M.tree = nil
   end, opts)
 end
 
