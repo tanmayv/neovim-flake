@@ -211,6 +211,13 @@ function M.start_watcher()
         end
         -- Fetch fresh git status and last commit asynchronously
         M.update_vcs_state()
+
+        -- Check if the file is open in any buffer and reload it
+        local full_path = path .. "/" .. filename
+        local bufnr = vim.fn.bufnr(full_path)
+        if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+          vim.cmd("checktime " .. bufnr)
+        end
       end)
     end
   end)
