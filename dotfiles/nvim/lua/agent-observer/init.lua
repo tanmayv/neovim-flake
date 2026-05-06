@@ -61,6 +61,20 @@ function M.update_vcs_state()
   end)
 end
 
+function M.get_base_content(file, callback)
+  local cmd = { "git", "show", "HEAD:" .. file }
+  
+  vim.system(cmd, { text = true }, function(obj)
+    if obj.code == 0 then
+      callback(obj.stdout)
+    else
+      vim.schedule(function()
+        vim.notify("Failed to get base content: " .. obj.stderr, vim.log.levels.ERROR)
+      end)
+    end
+  end)
+end
+
 -- Helper to build tree table from paths
 local function add_to_table(tbl, path_parts, full_path, category)
   local current = tbl
@@ -297,15 +311,134 @@ function M.toggle_diff()
     end
   end
 
-  -- o or Enter to open in main pane
-  vim.keymap.set("n", "o", function() open_file("edit") end, opts)
-  vim.keymap.set("n", "<CR>", function() open_file("edit") end, opts)
+  local function open_diff(file, mode)
+    M.get_base_content(file, function(base_content)
+      vim.schedule(function()
+        local target_win = M.main_win_id
+        
+        if not target_win or not vim.api.nvim_win_is_valid(target_win) then
+          local current_tab = vim.api.nvim_get_current_tabpage()
+          local wins = vim.api.nvim_tabpage_list_wins(current_tab)
+          for _, w in ipairs(wins) do
+            if w ~= M.win_id then
+              target_win = w
+              break
+            end
+          end
+        end
 
-  -- s to open in horizontal split
-  vim.keymap.set("n", "s", function() open_file("split") end, opts)
+        if not target_win or not vim.api.nvim_win_is_valid(target_win) then
+          vim.cmd("leftabove vsplit")
+          target_win = vim.api.nvim_get_current_win()
+          M.main_win_id = target_win
+        end
+
+        vim.api.nvim_set_current_win(target_win)
+
+        if mode == "edit" then
+          vim.cmd("edit " .. file)
+        elseif mode == "split" then
+          vim.cmd("split " .. file)
+        elseif mode == "vsplit" then
+          vim.cmd("vsplit " .. file)
+        end
+        
+        local working_win = vim.api.nvim_get_current_win()
+        local working_buf = vim.api.nvim_get_current_buf()
+        
+        -- Create split for base file
+        vim.cmd("vsplit")
+        local base_win = vim.api.nvim_get_current_win()
+        local base_buf = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_win_set_buf(base_win, base_buf)
+        
+        -- Set base content
+        local lines = vim.split(base_content, "\n")
+        vim.api.nvim_buf_set_lines(base_buf, 0, -1, false, lines)
+        
+        -- Set filetype for syntax highlighting
+        local ft = vim.filetype.match({ filename = file })
+        if ft then
+          vim.api.nvim_buf_set_option(base_buf, "filetype", ft)
+        end
+        
+        vim.bo[base_buf].readonly = true
+        vim.bo[base_buf].modifiable = false
+        
+        -- Diff this!
+        vim.api.nvim_set_current_win(working_win)
+        vim.cmd("diffthis")
+        vim.api.nvim_set_current_win(base_win)
+        vim.cmd("diffthis")
+        
+        -- Stay in working window or return to observer
+        if mode == "edit" then
+          vim.api.nvim_set_current_win(M.win_id)
+        else
+          vim.api.nvim_set_current_win(working_win)
+        end
+      end)
+    end)
+  end
+
+  local function show_diff_menu(file)
+    local Menu = require("nui.menu")
+    
+    local menu = Menu({
+      position = "center",
+      size = {
+        width = 20,
+        height = 3,
+      },
+      border = {
+        style = "single",
+        text = {
+          top = " Diff Layout ",
+          top_align = "center",
+        },
+      },
+      win_options = {
+        winhighlight = "Normal:Normal,FloatBorder:Normal",
+      },
+    }, {
+      lines = {
+        Menu.item("Main Pane", { mode = "edit" }),
+        Menu.item("Vertical Split", { mode = "vsplit" }),
+        Menu.item("Horizontal Split", { mode = "split" }),
+      },
+      max_width = 20,
+      keymap = {
+        focus_next = { "j", "<Down>", "<Tab>" },
+        focus_prev = { "k", "<Up>", "<S-Tab>" },
+        close = { "<Esc>", "q" },
+        submit = { "<CR>", "<Space>" },
+      },
+      on_submit = function(item)
+        open_diff(file, item.mode)
+      end,
+    })
+    
+    menu:mount()
+  end
 
   -- v to open in vertical split
   vim.keymap.set("n", "v", function() open_file("vsplit") end, opts)
+
+  -- d to open diff in main pane
+  vim.keymap.set("n", "d", function()
+    local node = M.tree:get_node()
+    if node and node.is_file and node.path then
+      open_diff(node.path, "edit")
+    end
+  end, opts)
+
+  -- D to open diff menu
+  vim.keymap.set("n", "D", function()
+    local node = M.tree:get_node()
+    if node and node.is_file and node.path then
+      show_diff_menu(node.path)
+    end
+  end, opts)
 
   -- l to expand/collapse
   vim.keymap.set("n", "l", function()
