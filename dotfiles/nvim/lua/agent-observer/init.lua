@@ -27,6 +27,15 @@ M.pending_files = {}
 M.last_commit_files = {}
 
 function M.update_vcs_state()
+  -- Check if in git repo first
+  local handle = io.popen("git rev-parse --is-inside-work-tree 2>/dev/null")
+  local is_git = handle:read("*l")
+  handle:close()
+  
+  if is_git ~= "true" then
+    return
+  end
+
   -- Async git status
   vim.system({ "git", "status", "--porcelain" }, { text = true }, function(obj)
     if obj.code == 0 then
