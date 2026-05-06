@@ -421,6 +421,13 @@ function M.toggle_diff()
     menu:mount()
   end
 
+  -- o or Enter to open in main pane
+  vim.keymap.set("n", "o", function() open_file("edit") end, opts)
+  vim.keymap.set("n", "<CR>", function() open_file("edit") end, opts)
+
+  -- s to open in horizontal split
+  vim.keymap.set("n", "s", function() open_file("split") end, opts)
+
   -- v to open in vertical split
   vim.keymap.set("n", "v", function() open_file("vsplit") end, opts)
 
