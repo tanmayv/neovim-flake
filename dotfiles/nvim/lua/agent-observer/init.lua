@@ -13,6 +13,7 @@ M.main_win_id = nil
 M.watcher = nil
 M.tab_id = nil
 M.tree = nil
+M.auto_mode = true
 
 -- Helper to get git root
 local function get_git_root()
@@ -158,6 +159,10 @@ function M.render_ui()
 
   local root_nodes = {}
 
+  -- Auto Mode Status
+  local status_text = M.auto_mode and " [Auto Mode: ON]" or " [Auto Mode: OFF]"
+  table.insert(root_nodes, NuiTree.Node({ text = status_text, is_status = true }))
+
   -- Active Session
   local active_node = NuiTree.Node({ text = "Active Session", is_category = true, _is_expanded = true }, build_tree_nodes(M.active_session_files, "active"))
   table.insert(root_nodes, active_node)
@@ -177,7 +182,9 @@ function M.render_ui()
       prepare_node = function(node)
         local NuiLine = require("nui.line")
         local line = NuiLine()
-        if node.is_category then
+        if node.is_status then
+          line:append(node.text, "Keyword")
+        elseif node.is_category then
           line:append(" " .. node.text, "Title")
         elseif not node.is_file then
           line:append("  " .. node.text, "Directory")
@@ -237,14 +244,17 @@ function M.start_watcher()
         local is_dir = stat and stat.type == "directory"
         local deleted = not stat
 
-        M.file_state[filename] = M.file_state[filename] or { opened = false }
-        M.file_state[filename].deleted = deleted
+        M.file_state[filename] = { opened = false, deleted = deleted }
 
         if not found and not is_dir then
           table.insert(M.active_session_files, 1, filename) -- prepend
         end
         -- Fetch fresh git status and last commit asynchronously
         M.update_vcs_state()
+
+        if M.auto_mode and not is_dir then
+          M.open_diff(filename, true)
+        end
 
         -- Check if the file is open in any buffer and reload it
         local full_path = path .. "/" .. filename
@@ -264,6 +274,69 @@ function M.stop_watcher()
   end
 end
 
+function M.open_diff(file, keep_focus)
+  M.get_base_content(file, function(base_content)
+    vim.schedule(function()
+      -- Close other windows in the tab
+      local current_tab = vim.api.nvim_get_current_tabpage()
+      local wins = vim.api.nvim_tabpage_list_wins(current_tab)
+      for _, w in ipairs(wins) do
+        if w ~= M.win_id then
+          pcall(vim.api.nvim_win_close, w, true)
+        end
+      end
+
+      -- Now only M.win_id is left, it fills the screen.
+      -- We want to restore it to width 35 on the right.
+      -- So we create a new window on the left.
+      vim.api.nvim_set_current_win(M.win_id)
+      vim.cmd("leftabove vsplit")
+      local working_win = vim.api.nvim_get_current_win()
+      
+      -- Set width of observer back to 35
+      vim.api.nvim_win_set_width(M.win_id, 35)
+
+      -- Now set up diff in working_win
+      vim.api.nvim_set_current_win(working_win)
+      vim.cmd("edit " .. file)
+      
+      local working_buf = vim.api.nvim_get_current_buf()
+      
+      -- Create split for base file
+      vim.cmd("vsplit")
+      local base_win = vim.api.nvim_get_current_win()
+      local base_buf = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_win_set_buf(base_win, base_buf)
+      
+      -- Set base content
+      local lines = vim.split(base_content, "\n")
+      vim.api.nvim_buf_set_lines(base_buf, 0, -1, false, lines)
+      
+      -- Set filetype for syntax highlighting
+      local ft = vim.filetype.match({ filename = file })
+      if ft then
+        vim.api.nvim_buf_set_option(base_buf, "filetype", ft)
+      end
+      
+      vim.bo[base_buf].readonly = true
+      vim.bo[base_buf].modifiable = false
+      
+      -- Diff this!
+      vim.api.nvim_set_current_win(working_win)
+      vim.cmd("diffthis")
+      vim.api.nvim_set_current_win(base_win)
+      vim.cmd("diffthis")
+      
+      -- Stay in working window or return to observer
+      if keep_focus then
+        vim.api.nvim_set_current_win(M.win_id)
+      else
+        vim.api.nvim_set_current_win(working_win)
+      end
+    end)
+  end)
+end
+
 function M.toggle_diff()
   if M.tab_id and vim.api.nvim_tabpage_is_valid(M.tab_id) then
     vim.api.nvim_set_current_tabpage(M.tab_id)
@@ -278,6 +351,7 @@ function M.toggle_diff()
   vim.cmd("tabnew")
   M.tab_id = vim.api.nvim_get_current_tabpage()
   M.main_win_id = vim.api.nvim_get_current_win()
+  M.show_startup_help()
 
   M.buf_id = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_option(M.buf_id, "filetype", "agent-observer")
@@ -294,7 +368,7 @@ function M.toggle_diff()
     local node = M.tree:get_node()
     if node and node.is_file and node.path then
       if node.deleted then
-        vim.notify("File is deleted, cannot open", vim.log.levels.WARN)
+        M.open_diff(node.path, keep_focus)
         return
       end
 
@@ -341,69 +415,6 @@ function M.toggle_diff()
     end
   end
 
-  local function open_diff(file, keep_focus)
-    M.get_base_content(file, function(base_content)
-      vim.schedule(function()
-        -- Close other windows in the tab
-        local current_tab = vim.api.nvim_get_current_tabpage()
-        local wins = vim.api.nvim_tabpage_list_wins(current_tab)
-        for _, w in ipairs(wins) do
-          if w ~= M.win_id then
-            pcall(vim.api.nvim_win_close, w, true)
-          end
-        end
-
-        -- Now only M.win_id is left, it fills the screen.
-        -- We want to restore it to width 35 on the right.
-        -- So we create a new window on the left.
-        vim.api.nvim_set_current_win(M.win_id)
-        vim.cmd("leftabove vsplit")
-        local working_win = vim.api.nvim_get_current_win()
-        
-        -- Set width of observer back to 35
-        vim.api.nvim_win_set_width(M.win_id, 35)
-
-        -- Now set up diff in working_win
-        vim.api.nvim_set_current_win(working_win)
-        vim.cmd("edit " .. file)
-        
-        local working_buf = vim.api.nvim_get_current_buf()
-        
-        -- Create split for base file
-        vim.cmd("vsplit")
-        local base_win = vim.api.nvim_get_current_win()
-        local base_buf = vim.api.nvim_create_buf(false, true)
-        vim.api.nvim_win_set_buf(base_win, base_buf)
-        
-        -- Set base content
-        local lines = vim.split(base_content, "\n")
-        vim.api.nvim_buf_set_lines(base_buf, 0, -1, false, lines)
-        
-        -- Set filetype for syntax highlighting
-        local ft = vim.filetype.match({ filename = file })
-        if ft then
-          vim.api.nvim_buf_set_option(base_buf, "filetype", ft)
-        end
-        
-        vim.bo[base_buf].readonly = true
-        vim.bo[base_buf].modifiable = false
-        
-        -- Diff this!
-        vim.api.nvim_set_current_win(working_win)
-        vim.cmd("diffthis")
-        vim.api.nvim_set_current_win(base_win)
-        vim.cmd("diffthis")
-        
-        -- Stay in working window or return to observer
-        if keep_focus then
-          vim.api.nvim_set_current_win(M.win_id)
-        else
-          vim.api.nvim_set_current_win(working_win)
-        end
-      end)
-    end)
-  end
-
   -- o to open in main pane and keep focus
   vim.keymap.set("n", "o", function() open_file("edit", true) end, opts)
   
@@ -420,7 +431,7 @@ function M.toggle_diff()
   vim.keymap.set("n", "d", function()
     local node = M.tree:get_node()
     if node and node.is_file and node.path then
-      open_diff(node.path, true)
+      M.open_diff(node.path, true)
     end
   end, opts)
 
@@ -443,6 +454,12 @@ function M.toggle_diff()
     M.render_ui()
   end, opts)
 
+  -- a to toggle auto mode
+  vim.keymap.set("n", "a", function()
+    M.auto_mode = not M.auto_mode
+    M.render_ui()
+  end, opts)
+
   -- q to close
   vim.keymap.set("n", "q", function()
     vim.cmd("tabclose")
@@ -452,6 +469,7 @@ function M.toggle_diff()
     M.tree = nil
   end, opts)
 end
+
 
 function M.show_startup_help()
   local lines = {
@@ -470,6 +488,7 @@ function M.show_startup_help()
     "| `d` | Open diff against HEAD | Stays on Observer |",
     "| `l` | Expand/Collapse tree node | - |",
     "| `h` | Toggle hidden files | - |",
+    "| `a` | Toggle auto mode | - |",
     "| `q` | Close Observer tab | - |",
     "",
     "Files in **Active Session** are color coded:",
@@ -498,12 +517,6 @@ function M.setup(opts)
   end, {})
 
   M.start_watcher()
-
-  vim.api.nvim_create_autocmd("VimEnter", {
-    callback = function()
-      M.show_startup_help()
-    end,
-  })
 end
 
 return M
