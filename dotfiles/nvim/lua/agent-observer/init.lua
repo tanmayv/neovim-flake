@@ -20,29 +20,42 @@ local function get_git_root()
   return result
 end
 
-local function get_git_status()
-  local handle = io.popen("git status --porcelain")
-  if not handle then return {} end
-  local result = {}
-  for line in handle:lines() do
-    local file = line:match("^%s*%S+%s+(.+)")
-    if file then
-      table.insert(result, file)
-    end
-  end
-  handle:close()
-  return result
-end
+M.pending_files = {}
+M.last_commit_files = {}
 
-local function get_git_last_commit()
-  local handle = io.popen("git diff-tree --no-commit-id --name-only -r HEAD")
-  if not handle then return {} end
-  local result = {}
-  for line in handle:lines() do
-    table.insert(result, line)
-  end
-  handle:close()
-  return result
+local function update_vcs_state()
+  -- Async git status
+  vim.system({ "git", "status", "--porcelain" }, { text = true }, function(obj)
+    if obj.code == 0 then
+      local result = {}
+      for line in vim.gsplit(obj.stdout, "\n") do
+        local file = line:match("^%s*%S+%s+(.+)")
+        if file then
+          table.insert(result, file)
+        end
+      end
+      M.pending_files = result
+      vim.schedule(function()
+        M.render_ui()
+      end)
+    end
+  end)
+
+  -- Async git last commit
+  vim.system({ "git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD" }, { text = true }, function(obj)
+    if obj.code == 0 then
+      local result = {}
+      for line in vim.gsplit(obj.stdout, "\n") do
+        if line ~= "" then
+          table.insert(result, line)
+        end
+      end
+      M.last_commit_files = result
+      vim.schedule(function()
+        M.render_ui()
+      end)
+    end
+  end)
 end
 
 -- Helper to build tree nodes from paths
@@ -101,8 +114,7 @@ function M.render_ui()
   -- Pending Changes
   local pending_node = NuiNode({ text = "Pending Changes", is_category = true })
   local pending_children = {}
-  local pending = get_git_status()
-  for _, file in ipairs(pending) do
+  for _, file in ipairs(M.pending_files) do
     add_path_to_tree(pending_children, file, "pending")
   end
   for _, child in ipairs(pending_children) do
@@ -113,8 +125,7 @@ function M.render_ui()
   -- Last Commit
   local last_node = NuiNode({ text = "Last Commit", is_category = true })
   local last_children = {}
-  local last_commit = get_git_last_commit()
-  for _, file in ipairs(last_commit) do
+  for _, file in ipairs(M.last_commit_files) do
     add_path_to_tree(last_children, file, "last")
   end
   for _, child in ipairs(last_children) do
@@ -173,8 +184,8 @@ function M.start_watcher()
         if not found then
           table.insert(M.active_session_files, 1, filename) -- prepend
         end
-        -- Re-render will fetch fresh git status and last commit
-        M.render_ui()
+        -- Fetch fresh git status and last commit asynchronously
+        update_vcs_state()
       end)
     end
   end)
@@ -208,7 +219,7 @@ function M.toggle_diff()
   M.win_id = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(M.win_id, M.buf_id)
 
-  M.render_ui()
+  update_vcs_state()
 
   local opts = { buffer = M.buf_id, noremap = true, silent = true }
   
