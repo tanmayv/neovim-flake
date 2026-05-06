@@ -71,6 +71,15 @@ function M.update_vcs_state()
 end
 
 function M.get_base_content(file, callback)
+  -- Check if in git repo first
+  local handle = io.popen("git rev-parse --is-inside-work-tree 2>/dev/null")
+  local is_git = handle:read("*l")
+  handle:close()
+  
+  if is_git ~= "true" then
+    return
+  end
+
   local cmd = { "git", "show", "HEAD:" .. file }
   
   vim.system(cmd, { text = true }, function(obj)
