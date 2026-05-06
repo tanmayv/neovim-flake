@@ -60,7 +60,7 @@ end
 
 -- Helper to build tree nodes from paths
 local function add_path_to_tree(root_nodes, path, category)
-  local NuiNode = require("nui.tree.node")
+  local NuiTree = require("nui.tree")
   local parts = vim.split(path, "/")
   local current_level = root_nodes
 
@@ -76,7 +76,7 @@ local function add_path_to_tree(root_nodes, path, category)
     end
 
     if not found then
-      local new_node = NuiNode({
+      local new_node = NuiTree.Node({
         text = part,
         is_file = is_file,
         path = path,
@@ -96,12 +96,11 @@ function M.render_ui()
   end
 
   local NuiTree = require("nui.tree")
-  local NuiNode = require("nui.tree.node")
 
   local root_nodes = {}
 
   -- Active Session
-  local active_node = NuiNode({ text = "Active Session", is_category = true })
+  local active_node = NuiTree.Node({ text = "Active Session", is_category = true })
   local active_children = {}
   for _, file in ipairs(M.active_session_files) do
     add_path_to_tree(active_children, file, "active")
@@ -112,7 +111,7 @@ function M.render_ui()
   table.insert(root_nodes, active_node)
 
   -- Pending Changes
-  local pending_node = NuiNode({ text = "Pending Changes", is_category = true })
+  local pending_node = NuiTree.Node({ text = "Pending Changes", is_category = true })
   local pending_children = {}
   for _, file in ipairs(M.pending_files) do
     add_path_to_tree(pending_children, file, "pending")
@@ -123,7 +122,7 @@ function M.render_ui()
   table.insert(root_nodes, pending_node)
 
   -- Last Commit
-  local last_node = NuiNode({ text = "Last Commit", is_category = true })
+  local last_node = NuiTree.Node({ text = "Last Commit", is_category = true })
   local last_children = {}
   for _, file in ipairs(M.last_commit_files) do
     add_path_to_tree(last_children, file, "last")
