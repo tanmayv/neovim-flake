@@ -221,7 +221,12 @@ function M.start_watcher()
             break
           end
         end
-        if not found then
+        
+        local full_path = path .. "/" .. filename
+        local stat = uv.fs_stat(full_path)
+        local is_dir = stat and stat.type == "directory"
+
+        if not found and not is_dir then
           table.insert(M.active_session_files, 1, filename) -- prepend
         end
         -- Fetch fresh git status and last commit asynchronously
