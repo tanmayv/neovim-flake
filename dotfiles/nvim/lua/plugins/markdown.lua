@@ -28,6 +28,17 @@ return {
       { "<leader>su", "<cmd>lua require('sc-im').update()<cr>", desc = "Recalculate Markdown table" },
       { "<leader>sU", "<cmd>lua require('sc-im').update(true)<cr>", desc = "Update sc file and Markdown table" },
     },
+  },
+  {
+    "OXY2DEV/markview.nvim",
+    dependencies = {
+      "nvim-treesitter/nvim-treesitter",
+      "nvim-tree/nvim-web-devicons"
+    },
+    config = function()
+      require("markview").setup()
+    end,
+  },
   {
     "tanmayv/tasks.nvim",
     dependencies = {
