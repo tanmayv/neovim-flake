@@ -14,6 +14,9 @@ M.watcher = nil
 M.tab_id = nil
 M.tree = nil
 M.auto_mode = true
+M.loading_pending = false
+M.loading_last = false
+M.loading_diff_file = nil
 
 -- Helper to get git root
 local function get_git_root()
@@ -38,8 +41,13 @@ function M.update_vcs_state()
     return
   end
 
+  M.loading_pending = true
+  M.loading_last = true
+  M.render_ui()
+
   -- Async git status
   vim.system({ "git", "status", "--porcelain" }, { text = true }, function(obj)
+    M.loading_pending = false
     if obj.code == 0 then
       local result = {}
       for line in vim.gsplit(obj.stdout, "\n") do
@@ -55,11 +63,16 @@ function M.update_vcs_state()
       vim.schedule(function()
         M.render_ui()
       end)
+    else
+      vim.schedule(function()
+        M.render_ui()
+      end)
     end
   end)
 
   -- Async git last commit
   vim.system({ "git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD" }, { text = true }, function(obj)
+    M.loading_last = false
     if obj.code == 0 then
       local result = {}
       for line in vim.gsplit(obj.stdout, "\n") do
@@ -68,6 +81,10 @@ function M.update_vcs_state()
         end
       end
       M.last_commit_files = result
+      vim.schedule(function()
+        M.render_ui()
+      end)
+    else
       vim.schedule(function()
         M.render_ui()
       end)
@@ -164,6 +181,9 @@ function M.render_ui()
 
   -- Auto Mode Status
   local status_text = M.auto_mode and " [Auto Mode: ON]" or " [Auto Mode: OFF]"
+  if M.loading_pending or M.loading_last then
+    status_text = status_text .. " [Loading...]"
+  end
   table.insert(root_nodes, NuiTree.Node({ text = status_text, is_status = true }))
 
   -- Active Session
@@ -198,7 +218,11 @@ function M.render_ui()
           elseif node.category == "active" and not node.opened then
             hl = "DiagnosticOk" -- Green (or String if DiagnosticOk not available)
           end
-          line:append("    " .. node.text, hl)
+          local text = node.text
+          if node.path == M.loading_diff_file then
+            text = text .. " [Loading...]"
+          end
+          line:append("    " .. text, hl)
         end
         return line
       end,
@@ -318,8 +342,14 @@ function M.open_diff(file, keep_focus)
     return
   end
 
+  M.loading_diff_file = file
+  M.render_ui()
+
   M.get_base_content(file, function(base_content)
     vim.schedule(function()
+      M.loading_diff_file = nil
+      M.render_ui()
+      
       -- Close other windows in the tab
       local current_tab = vim.api.nvim_get_current_tabpage()
       local wins = vim.api.nvim_tabpage_list_wins(current_tab)
