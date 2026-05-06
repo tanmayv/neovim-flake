@@ -58,36 +58,42 @@ local function update_vcs_state()
   end)
 end
 
--- Helper to build tree nodes from paths
-local function add_path_to_tree(root_nodes, path, category)
-  local NuiTree = require("nui.tree")
-  local parts = vim.split(path, "/")
-  local current_level = root_nodes
-
-  for i, part in ipairs(parts) do
-    local is_file = (i == #parts)
-    local found = false
-    for _, node in ipairs(current_level) do
-      if node.text == part and not node.is_file then
-        current_level = node:get_children()
-        found = true
-        break
-      end
-    end
-
-    if not found then
-      local new_node = NuiTree.Node({
+-- Helper to build tree table from paths
+local function add_to_table(tbl, path_parts, full_path, category)
+  local current = tbl
+  for i, part in ipairs(path_parts) do
+    local is_file = (i == #path_parts)
+    if not current[part] then
+      current[part] = {
         text = part,
         is_file = is_file,
-        path = path,
-        category = category
-      })
-      table.insert(current_level, new_node)
-      if not is_file then
-        current_level = new_node:get_children()
-      end
+        path = is_file and full_path or nil,
+        category = category,
+        children = {}
+      }
     end
+    current = current[part].children
   end
+end
+
+-- Helper to convert table to NuiTree nodes
+local function convert_to_nui_nodes(tbl)
+  local NuiTree = require("nui.tree")
+  local nodes = {}
+  local keys = vim.tbl_keys(tbl)
+  table.sort(keys)
+  
+  for _, key in ipairs(keys) do
+    local data = tbl[key]
+    local children = convert_to_nui_nodes(data.children)
+    table.insert(nodes, NuiTree.Node({
+      text = data.text,
+      is_file = data.is_file,
+      path = data.path,
+      category = data.category
+    }, #children > 0 and children or nil))
+  end
+  return nodes
 end
 
 function M.render_ui()
@@ -100,36 +106,27 @@ function M.render_ui()
   local root_nodes = {}
 
   -- Active Session
-  local active_node = NuiTree.Node({ text = "Active Session", is_category = true })
-  local active_children = {}
+  local active_table = {}
   for _, file in ipairs(M.active_session_files) do
-    add_path_to_tree(active_children, file, "active")
+    add_to_table(active_table, vim.split(file, "/"), file, "active")
   end
-  for _, child in ipairs(active_children) do
-    active_node:append(child)
-  end
+  local active_node = NuiTree.Node({ text = "Active Session", is_category = true }, convert_to_nui_nodes(active_table))
   table.insert(root_nodes, active_node)
 
   -- Pending Changes
-  local pending_node = NuiTree.Node({ text = "Pending Changes", is_category = true })
-  local pending_children = {}
+  local pending_table = {}
   for _, file in ipairs(M.pending_files) do
-    add_path_to_tree(pending_children, file, "pending")
+    add_to_table(pending_table, vim.split(file, "/"), file, "pending")
   end
-  for _, child in ipairs(pending_children) do
-    pending_node:append(child)
-  end
+  local pending_node = NuiTree.Node({ text = "Pending Changes", is_category = true }, convert_to_nui_nodes(pending_table))
   table.insert(root_nodes, pending_node)
 
   -- Last Commit
-  local last_node = NuiTree.Node({ text = "Last Commit", is_category = true })
-  local last_children = {}
+  local last_table = {}
   for _, file in ipairs(M.last_commit_files) do
-    add_path_to_tree(last_children, file, "last")
+    add_to_table(last_table, vim.split(file, "/"), file, "last")
   end
-  for _, child in ipairs(last_children) do
-    last_node:append(child)
-  end
+  local last_node = NuiTree.Node({ text = "Last Commit", is_category = true }, convert_to_nui_nodes(last_table))
   table.insert(root_nodes, last_node)
 
   if not M.tree then
