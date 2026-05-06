@@ -43,9 +43,12 @@ function M.update_vcs_state()
     if obj.code == 0 then
       local result = {}
       for line in vim.gsplit(obj.stdout, "\n") do
-        local file = line:match("^%s*%S+%s+(.+)")
-        if file then
+        if #line > 3 then
+          local status = line:sub(1, 2)
+          local file = line:sub(4)
           table.insert(result, file)
+          M.file_state[file] = M.file_state[file] or {}
+          M.file_state[file].vcs_status = status
         end
       end
       M.pending_files = result
@@ -275,6 +278,46 @@ function M.stop_watcher()
 end
 
 function M.open_diff(file, keep_focus)
+  local state = M.file_state[file]
+  if state and (state.vcs_status == "??" or state.vcs_status == "A ") then
+    vim.schedule(function()
+      -- Close other windows in the tab
+      local current_tab = vim.api.nvim_get_current_tabpage()
+      local wins = vim.api.nvim_tabpage_list_wins(current_tab)
+      for _, w in ipairs(wins) do
+        if w ~= M.win_id then
+          pcall(vim.api.nvim_win_close, w, true)
+        end
+      end
+
+      -- Now only M.win_id is left, it fills the screen.
+      -- We want to restore it to width 35 on the right.
+      -- So we create a new window on the left.
+      vim.api.nvim_set_current_win(M.win_id)
+      vim.cmd("leftabove vsplit")
+      local working_win = vim.api.nvim_get_current_win()
+      M.main_win_id = working_win
+      
+      -- Set width of observer back to 35
+      vim.api.nvim_win_set_width(M.win_id, 35)
+
+      -- Now set up file in working_win
+      vim.api.nvim_set_current_win(working_win)
+      vim.cmd("edit " .. file)
+      
+      vim.bo.readonly = true
+      vim.bo.modifiable = false
+      
+      -- Stay in working window or return to observer
+      if keep_focus then
+        vim.api.nvim_set_current_win(M.win_id)
+      else
+        vim.api.nvim_set_current_win(working_win)
+      end
+    end)
+    return
+  end
+
   M.get_base_content(file, function(base_content)
     vim.schedule(function()
       -- Close other windows in the tab
@@ -517,6 +560,7 @@ function M.setup(opts)
   end, {})
 
   M.start_watcher()
+  M.update_vcs_state()
 end
 
 return M
