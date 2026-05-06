@@ -37,6 +37,14 @@ return {
     },
     config = function()
       require("markview").setup()
+      
+      -- Enable wrap for markdown files
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = "markdown",
+        callback = function()
+          vim.opt_local.wrap = true
+        end,
+      })
     end,
   },
   {
