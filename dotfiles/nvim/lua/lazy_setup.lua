@@ -1,4 +1,4 @@
-require("lazy").setup({
+local specs = {
   {
     "AstroNvim/AstroNvim",
     version = "^5", -- Remove version tracking to elect for nightly AstroNvim
@@ -13,8 +13,13 @@ require("lazy").setup({
   },
   { import = "community" },
   { import = "plugins" },
-  { import = "cloudtop-plugins" },
-} --[[@as LazySpec]], {
+}
+
+if vim.fn.isdirectory(vim.fn.stdpath("config") .. "/lua/cloudtop-plugins") == 1 then
+  table.insert(specs, { import = "cloudtop-plugins" })
+end
+
+require("lazy").setup(specs --[[@as LazySpec]], {
   -- Configure any other `lazy.nvim` configuration options here
   install = { colorscheme = { "astrotheme", "habamax" } },
   ui = { backdrop = 100 },
