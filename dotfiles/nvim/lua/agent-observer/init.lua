@@ -25,7 +25,7 @@ end
 M.pending_files = {}
 M.last_commit_files = {}
 
-local function update_vcs_state()
+function M.update_vcs_state()
   -- Async git status
   vim.system({ "git", "status", "--porcelain" }, { text = true }, function(obj)
     if obj.code == 0 then
@@ -193,7 +193,7 @@ function M.start_watcher()
           table.insert(M.active_session_files, 1, filename) -- prepend
         end
         -- Fetch fresh git status and last commit asynchronously
-        update_vcs_state()
+        M.update_vcs_state()
       end)
     end
   end)
@@ -228,7 +228,7 @@ function M.toggle_diff()
   M.win_id = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(M.win_id, M.buf_id)
 
-  update_vcs_state()
+  M.update_vcs_state()
 
   local opts = { buffer = M.buf_id, noremap = true, silent = true }
   
