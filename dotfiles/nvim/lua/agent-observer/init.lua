@@ -17,6 +17,8 @@ M.auto_mode = true
 M.loading_pending = false
 M.loading_last = false
 M.loading_diff_file = nil
+M.seconds_to_update = 60
+M.poll_timer = nil
 
 -- Helper to get git root
 local function get_git_root()
@@ -183,6 +185,8 @@ function M.render_ui()
   local status_text = M.auto_mode and " [Auto Mode: ON]" or " [Auto Mode: OFF]"
   if M.loading_pending or M.loading_last then
     status_text = status_text .. " [Loading...]"
+  else
+    status_text = status_text .. " [Next update: " .. M.seconds_to_update .. "s]"
   end
   table.insert(root_nodes, NuiTree.Node({ text = status_text, is_status = true }))
 
@@ -533,6 +537,12 @@ function M.toggle_diff()
     M.render_ui()
   end, opts)
 
+  -- r to manually refresh
+  vim.keymap.set("n", "r", function()
+    M.update_vcs_state()
+    M.seconds_to_update = 60
+  end, opts)
+
   -- q to close
   vim.keymap.set("n", "q", function()
     vim.cmd("tabclose")
@@ -562,6 +572,7 @@ function M.show_startup_help()
     "| `l` | Expand/Collapse tree node | - |",
     "| `h` | Toggle hidden files | - |",
     "| `a` | Toggle auto mode | - |",
+    "| `r` | Manual refresh | - |",
     "| `q` | Close Observer tab | - |",
     "",
     "Files in **Active Session** are color coded:",
@@ -591,6 +602,19 @@ function M.setup(opts)
 
   M.start_watcher()
   M.update_vcs_state()
+
+  -- Start polling timer
+  local uv = vim.uv or vim.loop
+  M.poll_timer = uv.new_timer()
+  M.poll_timer:start(1000, 1000, vim.schedule_wrap(function()
+    M.seconds_to_update = M.seconds_to_update - 1
+    if M.seconds_to_update <= 0 then
+      M.update_vcs_state()
+      M.seconds_to_update = 60
+    else
+      M.render_ui()
+    end
+  end))
 end
 
 return M
