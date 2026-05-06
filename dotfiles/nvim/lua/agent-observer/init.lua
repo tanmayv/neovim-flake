@@ -25,6 +25,7 @@ end
 
 M.pending_files = {}
 M.last_commit_files = {}
+M.file_state = {} -- path -> { opened = bool, deleted = bool }
 
 function M.update_vcs_state()
   -- Check if in git repo first
@@ -127,11 +128,14 @@ local function build_tree_nodes(files, category)
     
     local file_nodes = {}
     for _, info in ipairs(file_infos) do
+      local state = M.file_state[info.full_path] or { opened = false, deleted = false }
       table.insert(file_nodes, NuiTree.Node({
         text = info.filename,
         is_file = true,
         path = info.full_path,
-        category = category
+        category = category,
+        opened = state.opened,
+        deleted = state.deleted
       }))
     end
     
@@ -178,7 +182,13 @@ function M.render_ui()
         elseif not node.is_file then
           line:append("  " .. node.text, "Directory")
         else
-          line:append("    " .. node.text, "Normal")
+          local hl = "Normal"
+          if node.deleted then
+            hl = "DiagnosticError" -- Red
+          elseif node.category == "active" and not node.opened then
+            hl = "DiagnosticOk" -- Green (or String if DiagnosticOk not available)
+          end
+          line:append("    " .. node.text, hl)
         end
         return line
       end,
@@ -225,6 +235,10 @@ function M.start_watcher()
         local full_path = path .. "/" .. filename
         local stat = uv.fs_stat(full_path)
         local is_dir = stat and stat.type == "directory"
+        local deleted = not stat
+
+        M.file_state[filename] = M.file_state[filename] or { opened = false }
+        M.file_state[filename].deleted = deleted
 
         if not found and not is_dir then
           table.insert(M.active_session_files, 1, filename) -- prepend
@@ -279,6 +293,16 @@ function M.toggle_diff()
   local function open_file(mode, keep_focus)
     local node = M.tree:get_node()
     if node and node.is_file and node.path then
+      if node.deleted then
+        vim.notify("File is deleted, cannot open", vim.log.levels.WARN)
+        return
+      end
+
+      -- Mark as opened
+      M.file_state[node.path] = M.file_state[node.path] or {}
+      M.file_state[node.path].opened = true
+      M.render_ui()
+
       local target_win = M.main_win_id
       
       if not target_win or not vim.api.nvim_win_is_valid(target_win) then
