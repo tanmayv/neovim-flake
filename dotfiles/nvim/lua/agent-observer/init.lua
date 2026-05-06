@@ -92,7 +92,17 @@ local function convert_to_nui_nodes(tbl)
     if M.config.show_hidden or not data.text:match("^%.") then
       local children = convert_to_nui_nodes(data.children)
       
-      if data.is_file or #children > 0 then
+      if not data.is_file and #children == 1 and not children[1].is_file then
+        -- Compress: Merge current directory with child directory
+        local child = children[1]
+        table.insert(nodes, NuiTree.Node({
+          text = data.text .. "/" .. child.text,
+          is_file = false,
+          path = child.path,
+          category = data.category,
+          _is_expanded = child._is_expanded
+        }, child.__children))
+      elseif data.is_file or #children > 0 then
         table.insert(nodes, NuiTree.Node({
           text = data.text,
           is_file = data.is_file,
