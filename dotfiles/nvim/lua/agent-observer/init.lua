@@ -453,6 +453,43 @@ function M.toggle_diff()
   end, opts)
 end
 
+function M.show_startup_help()
+  local lines = {
+    "# Agent Observer",
+    "",
+    "The Agent Observer monitors file changes made by background agents in real-time.",
+    "",
+    "## Keybindings",
+    "",
+    "| Key | Action | Focus |",
+    "| --- | --- | --- |",
+    "| `o` | Open file in main pane | Stays on Observer |",
+    "| `<CR>` | Open file in main pane | Moves to file |",
+    "| `s` | Open file in horizontal split | Moves to split |",
+    "| `v` | Open file in vertical split | Moves to split |",
+    "| `d` | Open diff against HEAD | Stays on Observer |",
+    "| `l` | Expand/Collapse tree node | - |",
+    "| `h` | Toggle hidden files | - |",
+    "| `q` | Close Observer tab | - |",
+    "",
+    "Files in **Active Session** are color coded:",
+    "- **Green**: Changed but not yet opened.",
+    "- **Red**: Deleted (cannot be opened, but supports diff).",
+  }
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local buf_name = vim.api.nvim_buf_get_name(bufnr)
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  local first_line = vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1]
+
+  if buf_name == "" and line_count == 1 and first_line == "" then
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+    vim.api.nvim_buf_set_option(bufnr, "filetype", "markdown")
+    vim.api.nvim_buf_set_option(bufnr, "bufhidden", "hide")
+    vim.api.nvim_buf_set_option(bufnr, "buftype", "nofile")
+  end
+end
+
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
   
@@ -461,6 +498,12 @@ function M.setup(opts)
   end, {})
 
   M.start_watcher()
+
+  vim.api.nvim_create_autocmd("VimEnter", {
+    callback = function()
+      M.show_startup_help()
+    end,
+  })
 end
 
 return M
