@@ -251,7 +251,11 @@ function M.toggle_diff()
   vim.keymap.set("n", "l", function()
     local node = M.tree:get_node()
     if node and not node.is_file then
-      node:toggle()
+      if node:is_expanded() then
+        node:collapse()
+      else
+        node:expand()
+      end
       M.tree:render()
     end
   end, opts)
