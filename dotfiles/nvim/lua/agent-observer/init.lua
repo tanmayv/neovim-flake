@@ -169,6 +169,11 @@ function M.render_ui()
     M.tree:set_nodes(root_nodes)
   end
 
+  -- Force expand all nodes
+  for _, node in pairs(M.tree.nodes.by_id) do
+    node:expand()
+  end
+
   M.tree:render()
 end
 
