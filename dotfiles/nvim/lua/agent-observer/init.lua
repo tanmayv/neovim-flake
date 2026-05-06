@@ -90,7 +90,8 @@ local function convert_to_nui_nodes(tbl)
       text = data.text,
       is_file = data.is_file,
       path = data.path,
-      category = data.category
+      category = data.category,
+      _is_expanded = not data.is_file
     }, #children > 0 and children or nil))
   end
   return nodes
@@ -110,7 +111,7 @@ function M.render_ui()
   for _, file in ipairs(M.active_session_files) do
     add_to_table(active_table, vim.split(file, "/"), file, "active")
   end
-  local active_node = NuiTree.Node({ text = "Active Session", is_category = true }, convert_to_nui_nodes(active_table))
+  local active_node = NuiTree.Node({ text = "Active Session", is_category = true, _is_expanded = true }, convert_to_nui_nodes(active_table))
   table.insert(root_nodes, active_node)
 
   -- Pending Changes
@@ -118,7 +119,7 @@ function M.render_ui()
   for _, file in ipairs(M.pending_files) do
     add_to_table(pending_table, vim.split(file, "/"), file, "pending")
   end
-  local pending_node = NuiTree.Node({ text = "Pending Changes", is_category = true }, convert_to_nui_nodes(pending_table))
+  local pending_node = NuiTree.Node({ text = "Pending Changes", is_category = true, _is_expanded = true }, convert_to_nui_nodes(pending_table))
   table.insert(root_nodes, pending_node)
 
   -- Last Commit
@@ -126,7 +127,7 @@ function M.render_ui()
   for _, file in ipairs(M.last_commit_files) do
     add_to_table(last_table, vim.split(file, "/"), file, "last")
   end
-  local last_node = NuiTree.Node({ text = "Last Commit", is_category = true }, convert_to_nui_nodes(last_table))
+  local last_node = NuiTree.Node({ text = "Last Commit", is_category = true, _is_expanded = true }, convert_to_nui_nodes(last_table))
   table.insert(root_nodes, last_node)
 
   if not M.tree then
