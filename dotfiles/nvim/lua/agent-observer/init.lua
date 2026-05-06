@@ -2,6 +2,7 @@ local M = {}
 
 M.config = {
   vcs_adapter = "git", -- default
+  expand_level = 2, -- default expand level
 }
 
 M.active_session_files = {}
@@ -148,6 +149,13 @@ function M.render_ui()
     })
   else
     M.tree:set_nodes(root_nodes)
+  end
+
+  -- Expand to configured level
+  for _, node in pairs(M.tree.nodes.by_id) do
+    if node:get_depth() <= M.config.expand_level and not node.is_file then
+      node:expand()
+    end
   end
 
   M.tree:render()
