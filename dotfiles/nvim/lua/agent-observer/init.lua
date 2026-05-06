@@ -3,6 +3,7 @@ local M = {}
 M.config = {
   vcs_adapter = "git", -- default
   expand_level = 2, -- default expand level
+  show_hidden = false, -- default show hidden files
 }
 
 M.active_session_files = {}
@@ -87,14 +88,20 @@ local function convert_to_nui_nodes(tbl)
   
   for _, key in ipairs(keys) do
     local data = tbl[key]
-    local children = convert_to_nui_nodes(data.children)
-    table.insert(nodes, NuiTree.Node({
-      text = data.text,
-      is_file = data.is_file,
-      path = data.path,
-      category = data.category,
-      _is_expanded = not data.is_file
-    }, #children > 0 and children or nil))
+    
+    if M.config.show_hidden or not data.text:match("^%.") then
+      local children = convert_to_nui_nodes(data.children)
+      
+      if data.is_file or #children > 0 then
+        table.insert(nodes, NuiTree.Node({
+          text = data.text,
+          is_file = data.is_file,
+          path = data.path,
+          category = data.category,
+          _is_expanded = not data.is_file
+        }, #children > 0 and children or nil))
+      end
+    end
   end
   return nodes
 end
@@ -294,6 +301,12 @@ function M.toggle_diff()
       end
       M.tree:render()
     end
+  end, opts)
+
+  -- h to toggle hidden files
+  vim.keymap.set("n", "h", function()
+    M.config.show_hidden = not M.config.show_hidden
+    M.render_ui()
   end, opts)
 
   -- q to close
