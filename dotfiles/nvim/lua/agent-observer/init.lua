@@ -253,7 +253,7 @@ function M.toggle_diff()
 
   local opts = { buffer = M.buf_id, noremap = true, silent = true }
   
-  local function open_file(mode)
+  local function open_file(mode, keep_focus)
     local node = M.tree:get_node()
     if node and node.is_file and node.path then
       local target_win = M.main_win_id
@@ -288,13 +288,13 @@ function M.toggle_diff()
       vim.bo.readonly = true
       vim.bo.modifiable = false
       
-      if mode == "edit" then
+      if keep_focus then
         vim.api.nvim_set_current_win(M.win_id)
       end
     end
   end
 
-  local function open_diff(file)
+  local function open_diff(file, keep_focus)
     M.get_base_content(file, function(base_content)
       vim.schedule(function()
         -- Close other windows in the tab
@@ -347,27 +347,33 @@ function M.toggle_diff()
         vim.api.nvim_set_current_win(base_win)
         vim.cmd("diffthis")
         
-        -- Stay in working window
-        vim.api.nvim_set_current_win(working_win)
+        -- Stay in working window or return to observer
+        if keep_focus then
+          vim.api.nvim_set_current_win(M.win_id)
+        else
+          vim.api.nvim_set_current_win(working_win)
+        end
       end)
     end)
   end
 
-  -- o or Enter to open in main pane
-  vim.keymap.set("n", "o", function() open_file("edit") end, opts)
-  vim.keymap.set("n", "<CR>", function() open_file("edit") end, opts)
+  -- o to open in main pane and keep focus
+  vim.keymap.set("n", "o", function() open_file("edit", true) end, opts)
+  
+  -- Enter to open in main pane and move focus
+  vim.keymap.set("n", "<CR>", function() open_file("edit", false) end, opts)
 
-  -- s to open in horizontal split
-  vim.keymap.set("n", "s", function() open_file("split") end, opts)
+  -- s to open in horizontal split and move focus
+  vim.keymap.set("n", "s", function() open_file("split", false) end, opts)
 
-  -- v to open in vertical split
-  vim.keymap.set("n", "v", function() open_file("vsplit") end, opts)
+  -- v to open in vertical split and move focus
+  vim.keymap.set("n", "v", function() open_file("vsplit", false) end, opts)
 
-  -- d to open diff
+  -- d to open diff and keep focus
   vim.keymap.set("n", "d", function()
     local node = M.tree:get_node()
     if node and node.is_file and node.path then
-      open_diff(node.path)
+      open_diff(node.path, true)
     end
   end, opts)
 
