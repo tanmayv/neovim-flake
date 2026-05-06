@@ -120,19 +120,27 @@ function M.stop_watcher()
   end
 end
 
+M.tab_id = nil
+
 function M.toggle_diff()
-  if M.win_id and vim.api.nvim_win_is_valid(M.win_id) then
-    vim.api.nvim_win_close(M.win_id, true)
+  if M.tab_id and vim.api.nvim_tabpage_is_valid(M.tab_id) then
+    vim.api.nvim_set_current_tabpage(M.tab_id)
+    vim.cmd("tabclose")
+    M.tab_id = nil
     M.win_id = nil
     M.buf_id = nil
     return
   end
 
-  -- Create scratch buffer
+  -- Create a new tab
+  vim.cmd("tabnew")
+  M.tab_id = vim.api.nvim_get_current_tabpage()
+
+  -- Create scratch buffer for observer
   M.buf_id = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_option(M.buf_id, "filetype", "agent-observer")
 
-  -- Create vertical split on the right
+  -- Create vertical split on the right for the observer
   vim.cmd("botright 40vsplit")
   M.win_id = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(M.win_id, M.buf_id)
@@ -147,7 +155,7 @@ function M.toggle_diff()
     local line = vim.api.nvim_get_current_line()
     local file = line:match("^%s+(.+)")
     if file then
-      -- Move to the window on the left
+      -- Move to the window on the left (the empty one created by tabnew)
       vim.cmd("wincmd h")
       -- Open the file
       vim.cmd("edit " .. file)
@@ -159,7 +167,10 @@ function M.toggle_diff()
 
   -- q to close
   vim.keymap.set("n", "q", function()
-    M.toggle_diff()
+    vim.cmd("tabclose")
+    M.tab_id = nil
+    M.win_id = nil
+    M.buf_id = nil
   end, opts)
 end
 
