@@ -75,57 +75,54 @@ function M.get_base_content(file, callback)
   end)
 end
 
--- Helper to build tree table from paths
-local function add_to_table(tbl, path_parts, full_path, category)
-  local current = tbl
-  for i, part in ipairs(path_parts) do
-    local is_file = (i == #path_parts)
-    if not current[part] then
-      current[part] = {
-        text = part,
-        is_file = is_file,
-        path = is_file and full_path or nil,
-        category = category,
-        children = {}
-      }
-    end
-    current = current[part].children
+local function get_dir_and_file(path)
+  local parts = vim.split(path, "/")
+  if #parts == 1 then
+    return "./", parts[1]
+  else
+    local file = table.remove(parts)
+    return table.concat(parts, "/") .. "/", file
   end
 end
 
--- Helper to convert table to NuiTree nodes
-local function convert_to_nui_nodes(tbl)
+local function build_tree_nodes(files, category)
   local NuiTree = require("nui.tree")
-  local nodes = {}
-  local keys = vim.tbl_keys(tbl)
-  table.sort(keys)
+  local dir_groups = {}
   
-  for _, key in ipairs(keys) do
-    local data = tbl[key]
-    
-    if M.config.show_hidden or not data.text:match("^%.") then
-      local children = convert_to_nui_nodes(data.children)
-      
-      if not data.is_file and #children == 1 and not children[1].is_file then
-        -- Compress: Merge current directory with child directory
-        local child = children[1]
-        table.insert(nodes, NuiTree.Node({
-          text = data.text .. "/" .. child.text,
-          is_file = false,
-          path = child.path,
-          category = data.category,
-          _is_expanded = child._is_expanded
-        }, child.__children))
-      elseif data.is_file or #children > 0 then
-        table.insert(nodes, NuiTree.Node({
-          text = data.text,
-          is_file = data.is_file,
-          path = data.path,
-          category = data.category,
-          _is_expanded = not data.is_file
-        }, #children > 0 and children or nil))
+  for _, file in ipairs(files) do
+    if M.config.show_hidden or not file:match("^%.") then
+      local dir, filename = get_dir_and_file(file)
+      if not dir_groups[dir] then
+        dir_groups[dir] = {}
       end
+      table.insert(dir_groups[dir], { filename = filename, full_path = file })
     end
+  end
+  
+  local nodes = {}
+  local dirs = vim.tbl_keys(dir_groups)
+  table.sort(dirs)
+  
+  for _, dir in ipairs(dirs) do
+    local file_infos = dir_groups[dir]
+    table.sort(file_infos, function(a, b) return a.filename < b.filename end)
+    
+    local file_nodes = {}
+    for _, info in ipairs(file_infos) do
+      table.insert(file_nodes, NuiTree.Node({
+        text = info.filename,
+        is_file = true,
+        path = info.full_path,
+        category = category
+      }))
+    end
+    
+    table.insert(nodes, NuiTree.Node({
+      text = dir,
+      is_file = false,
+      category = category,
+      _is_expanded = true
+    }, file_nodes))
   end
   return nodes
 end
@@ -140,27 +137,15 @@ function M.render_ui()
   local root_nodes = {}
 
   -- Active Session
-  local active_table = {}
-  for _, file in ipairs(M.active_session_files) do
-    add_to_table(active_table, vim.split(file, "/"), file, "active")
-  end
-  local active_node = NuiTree.Node({ text = "Active Session", is_category = true, _is_expanded = true }, convert_to_nui_nodes(active_table))
+  local active_node = NuiTree.Node({ text = "Active Session", is_category = true, _is_expanded = true }, build_tree_nodes(M.active_session_files, "active"))
   table.insert(root_nodes, active_node)
 
   -- Pending Changes
-  local pending_table = {}
-  for _, file in ipairs(M.pending_files) do
-    add_to_table(pending_table, vim.split(file, "/"), file, "pending")
-  end
-  local pending_node = NuiTree.Node({ text = "Pending Changes", is_category = true, _is_expanded = true }, convert_to_nui_nodes(pending_table))
+  local pending_node = NuiTree.Node({ text = "Pending Changes", is_category = true, _is_expanded = true }, build_tree_nodes(M.pending_files, "pending"))
   table.insert(root_nodes, pending_node)
 
   -- Last Commit
-  local last_table = {}
-  for _, file in ipairs(M.last_commit_files) do
-    add_to_table(last_table, vim.split(file, "/"), file, "last")
-  end
-  local last_node = NuiTree.Node({ text = "Last Commit", is_category = true, _is_expanded = true }, convert_to_nui_nodes(last_table))
+  local last_node = NuiTree.Node({ text = "Last Commit", is_category = true, _is_expanded = true }, build_tree_nodes(M.last_commit_files, "last"))
   table.insert(root_nodes, last_node)
 
   if not M.tree then
@@ -173,7 +158,7 @@ function M.render_ui()
         if node.is_category then
           line:append(" " .. node.text, "Title")
         elseif not node.is_file then
-          line:append("  " .. node.text .. "/", "Directory")
+          line:append("  " .. node.text, "Directory")
         else
           line:append("    " .. node.text, "Normal")
         end
@@ -182,13 +167,6 @@ function M.render_ui()
     })
   else
     M.tree:set_nodes(root_nodes)
-  end
-
-  -- Expand to configured level
-  for _, node in pairs(M.tree.nodes.by_id) do
-    if node:get_depth() <= M.config.expand_level and not node.is_file then
-      node:expand()
-    end
   end
 
   M.tree:render()
