@@ -1,0 +1,116 @@
+return {
+  {
+    "DAmesberger/sc-im.nvim",
+    config = function()
+      require("sc-im").setup {
+        ft = "scim",
+        include_sc_file = true,
+        update_sc_from_md = true,
+        link_fmt = 1,
+        split = "floating",
+        float_config = {
+          height = 0.9,
+          width = 0.9,
+          style = "minimal",
+          border = "single",
+          hl = "Normal",
+          blend = 0,
+        },
+      }
+    end,
+    keys = {
+      { "<leader>s", group = "sc-im" },
+      { "<leader>sc", "<cmd>lua require('sc-im').open_in_scim()<cr>", desc = "Open table in sc-im" },
+      { "<leader>sl", "<cmd>lua require('sc-im').open_in_scim(true)<cr>", desc = "Open table in sc-im" },
+      { "<leader>sp", "<cmd>lua require('sc-im').open_in_scim(false)<cr>", desc = "Open plain table in sc-im" },
+      { "<leader>st", "<cmd>lua require('sc-im').toggle(true)<cr>", desc = "Toggle sc-im link format" },
+      { "<leader>sr", "<cmd>lua require('sc-im').rename()<cr>", desc = "Rename linked sc-im file" },
+      { "<leader>su", "<cmd>lua require('sc-im').update()<cr>", desc = "Recalculate Markdown table" },
+      { "<leader>sU", "<cmd>lua require('sc-im').update(true)<cr>", desc = "Update sc file and Markdown table" },
+    },
+  },
+  {
+    "MeanderingProgrammer/render-markdown.nvim",
+    dependencies = { "nvim-treesitter/nvim-treesitter", "nvim-mini/mini.nvim" }, -- if you use the mini.nvim suite
+    opts = {
+      file_types = { "markdown", "sqlmd.markdown", "codecampanion", "Avante" },
+      ft = { "markdown", "codecompanion", "Avante" },
+    },
+  },
+  {
+    "tanmayv/tasks.nvim",
+    dependencies = {
+      "kkharji/sqlite.lua", -- Required for database operations
+    },
+    config = function()
+      require("task_manager").setup {
+        -- The directories where you keep your task markdown files
+        directories = { vim.fn.expand "~/pkm" },
+
+        -- Where the SQLite database will be stored (defaults to ~/.local/share/nvim/task_manager.db)
+        db_path = vim.fn.stdpath "data" .. "/task_manager.db",
+        inbox_file = vim.fn.expand "~/pkm/tasks.md",
+        auto_tags = {
+          ["/daily/"] = { "daily" },
+        },
+      }
+      require("task_manager").setup_lsp()
+      -- A general keymap to view all open tasks
+      vim.keymap.set(
+        "n",
+        "<leader>tt",
+        function() require("task_manager.telescope").tasks() end,
+        { desc = "View [T]asks" }
+      )
+      -- A keymap to view ALL tasks, including completed and cancelled ones
+      vim.keymap.set(
+        "n",
+        "<leader>tA",
+        function()
+          require("task_manager.telescope").tasks {
+            status = { "todo", "in_progress", "done", "cancelled" },
+          }
+        end,
+        { desc = "View [T]asks [A]ll" }
+      )
+      vim.keymap.set("n", "<leader>tw", function()
+        local workspace = nil
+        if vim.env.TMUX then
+          workspace = vim.fn.system("tmux display-message -p '#S'"):gsub("\n", "")
+        end
+        if workspace and workspace ~= "" then
+          require("task_manager.telescope").tasks { project = workspace }
+        else
+          require("task_manager.telescope").tasks()
+        end
+      end, { desc = "View [T]asks from @[w]ork" })
+      -- A keymap to view ONLY tasks with the '#urgent' tag
+      vim.keymap.set("n", "<leader>ta", function()
+        local workspace = nil
+        if vim.env.TMUX then
+          workspace = vim.fn.system("tmux display-message -p '#S'"):gsub("\n", "")
+        end
+        if workspace and workspace ~= "" then
+          vim.cmd(string.format("TaskAdd %s", workspace))
+        else
+          vim.cmd "TaskAdd"
+        end
+      end, { desc = "Task [A]dd" })
+      -- A keymap to add a new task to inbox_file
+      vim.keymap.set(
+        "n",
+        "<leader>tu",
+        function() require("task_manager.telescope").tasks { tags = "urgent" } end,
+        { desc = "View [T]asks #urgent" }
+      )
+      vim.keymap.set(
+        "n",
+        "<leader>td",
+        function() require("task_manager.telescope").tasks { tags = { "daily", "now" }, match_any_tag = true } end,
+        { desc = "View Daily Tasks" }
+      )
+      vim.keymap.set("n", "<leader>tx", "<cmd>TaskToggle<CR>", { desc = "Toggle task done" })
+      -- vim.keymap.set("v", "<leader>tx", "<cmd>'<,'>TaskToggle<CR>", { desc = "Toggle task done" })
+    end,
+  },
+}
