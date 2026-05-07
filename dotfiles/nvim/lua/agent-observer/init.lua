@@ -203,6 +203,16 @@ function M.render_ui()
   local last_node = NuiTree.Node({ text = "Last Commit", is_category = true, _is_expanded = true }, build_tree_nodes(M.last_commit_files, "last"))
   table.insert(root_nodes, last_node)
 
+  -- Watched Paths (Debug)
+  if M.watched_paths and #M.watched_paths > 0 then
+    local watched_nodes = {}
+    for _, path in ipairs(M.watched_paths) do
+      table.insert(watched_nodes, NuiTree.Node({ text = path, is_file = true }))
+    end
+    local watched_node = NuiTree.Node({ text = "Watched Paths (Debug)", is_category = true, _is_expanded = true }, watched_nodes)
+    table.insert(root_nodes, watched_node)
+  end
+
   if not M.tree then
     M.tree = NuiTree({
       bufnr = M.buf_id,
