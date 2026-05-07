@@ -320,7 +320,10 @@ end
 
 function M.open_diff(file, keep_focus)
   local state = M.file_state[file]
-  if state and (state.vcs_status == "??" or state.vcs_status == "A ") then
+  local status = state and state.vcs_status or ""
+  status = vim.trim(status)
+  
+  if status == "??" or status == "?" or status == "A" then
     vim.schedule(function()
       -- Close other windows in the tab
       local current_tab = vim.api.nvim_get_current_tabpage()
