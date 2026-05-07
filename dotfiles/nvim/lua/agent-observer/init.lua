@@ -437,6 +437,12 @@ function M.toggle_diff()
   M.win_id = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(M.win_id, M.buf_id)
 
+  -- Disable line numbers and signs to save space
+  vim.wo[M.win_id].number = false
+  vim.wo[M.win_id].relativenumber = false
+  vim.wo[M.win_id].signcolumn = "no"
+  vim.wo[M.win_id].foldcolumn = "0"
+
   M.update_vcs_state()
 
   local opts = { buffer = M.buf_id, noremap = true, silent = true }
