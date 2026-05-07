@@ -185,22 +185,22 @@ function M.render_ui()
   -- Auto Mode Status
   local status_text = M.auto_mode and " [Auto Mode: ON]" or " [Auto Mode: OFF]"
   if M.loading_pending or M.loading_last then
-    status_text = status_text .. " [Loading...]"
+    status_text = status_text .. " ⏳"
   else
     status_text = status_text .. " [Next update: " .. M.seconds_to_update .. "s]"
   end
   table.insert(root_nodes, NuiTree.Node({ text = status_text, is_status = true }))
 
   -- Active Session
-  local active_node = NuiTree.Node({ text = "Active Session", is_category = true, _is_expanded = true }, build_tree_nodes(M.active_session_files, "active"))
+  local active_node = NuiTree.Node({ text = "Active Session", is_category = true, category_type = "active", _is_expanded = true }, build_tree_nodes(M.active_session_files, "active"))
   table.insert(root_nodes, active_node)
 
   -- Pending Changes
-  local pending_node = NuiTree.Node({ text = "Pending Changes", is_category = true, _is_expanded = true }, build_tree_nodes(M.pending_files, "pending"))
+  local pending_node = NuiTree.Node({ text = "Pending Changes", is_category = true, category_type = "pending", _is_expanded = true }, build_tree_nodes(M.pending_files, "pending"))
   table.insert(root_nodes, pending_node)
 
   -- Last Commit
-  local last_node = NuiTree.Node({ text = "Last Commit", is_category = true, _is_expanded = true }, build_tree_nodes(M.last_commit_files, "last"))
+  local last_node = NuiTree.Node({ text = "Last Commit", is_category = true, category_type = "last", _is_expanded = true }, build_tree_nodes(M.last_commit_files, "last"))
   table.insert(root_nodes, last_node)
 
   -- Watched Paths (Debug)
@@ -212,7 +212,7 @@ function M.render_ui()
   else
     table.insert(watched_nodes, NuiTree.Node({ text = "No paths being watched", is_file = true }))
   end
-  local watched_node = NuiTree.Node({ text = "Watched Paths (Debug)", is_category = true, _is_expanded = true }, watched_nodes)
+  local watched_node = NuiTree.Node({ text = "Watched Paths (Debug)", is_category = true, category_type = "debug", _is_expanded = true }, watched_nodes)
   table.insert(root_nodes, watched_node)
 
   if not M.tree then
@@ -225,7 +225,17 @@ function M.render_ui()
         if node.is_status then
           line:append(node.text, "Keyword")
         elseif node.is_category then
-          line:append(" " .. node.text, "Title")
+          local hl = "Title"
+          if node.category_type == "active" then
+            hl = "DiagnosticInfo"
+          elseif node.category_type == "pending" then
+            hl = "DiagnosticWarn"
+          elseif node.category_type == "last" then
+            hl = "DiagnosticHint"
+          elseif node.category_type == "debug" then
+            hl = "Comment"
+          end
+          line:append(" " .. node.text, hl)
         elseif not node.is_file then
           line:append("  " .. node.text, "Directory")
         else
@@ -237,7 +247,7 @@ function M.render_ui()
           end
           local text = node.text
           if node.path == M.loading_diff_file then
-            text = text .. " [Loading...]"
+            text = text .. " ⏳"
           end
           line:append("    " .. text, hl)
         end
