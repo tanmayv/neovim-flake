@@ -47,7 +47,10 @@ return {
       end
     end,
   },
-  "andweeb/presence.nvim",
+  {
+    "andweeb/presence.nvim",
+    event = "VeryLazy",
+  },
   {
     "ray-x/lsp_signature.nvim",
     event = "BufRead",
@@ -142,6 +145,17 @@ return {
   },
   {
     "zk-org/zk-nvim",
+    keys = {
+      { "<leader>zn", ":lua zk_wrapper()<cr>", desc = "New Note" },
+      { "<leader>zo", "<Cmd>ZkNotes { sort = { 'modified' } }<CR>", desc = "Open Notes" },
+      { "<leader>zwo", "<Cmd>ZkNotes { sort = { 'modified' }, tags = { 'workspace' } }<CR>", desc = "Open Workspace Notes" },
+      { "<leader>zt", "<Cmd>ZkTags<CR>", desc = "Tags" },
+      { "<leader>zf", "<Cmd>ZkNotes { sort = { 'modified' }, match = { vim.fn.input('Search: ') } }<CR>", desc = "Search Notes" },
+      { "gd", "<Cmd>lua vim.lsp.buf.definition()<CR>", desc = "Go to Definition" },
+      { "<leader>zb", "<Cmd>ZkBacklinks<CR>", desc = "Backlinks" },
+      { "<leader>zl", "<Cmd>ZkLinks<CR>", desc = "Links" },
+      { "<leader>zf", ":'<,'>ZkMatch<CR>", mode = "v", desc = "Match Selection" },
+    },
     config = function()
       vim.env.ZK_NOTEBOOK_DIR = vim.fn.expand "~/pkm"
       require("zk").setup {
@@ -170,36 +184,6 @@ return {
         }):start() -- or start()
         print "Creating new note ..."
       end
-
-      local opts = { noremap = true, silent = false }
-
-      -- Create a new note after asking for its title.
-      vim.api.nvim_set_keymap("n", "<leader>zn", ":lua zk_wrapper()<cr>", opts)
-
-      -- Open notes.
-      vim.api.nvim_set_keymap("n", "<leader>zo", "<Cmd>ZkNotes { sort = { 'modified' } }<CR>", opts)
-      vim.api.nvim_set_keymap(
-        "n",
-        "<leader>zwo",
-        "<Cmd>ZkNotes { sort = { 'modified' }, tags = { 'workspace' } }<CR>",
-        opts
-      )
-      -- Open notes associated with the selected tags.
-      vim.api.nvim_set_keymap("n", "<leader>zt", "<Cmd>ZkTags<CR>", opts)
-
-      -- Search for the notes matching a given query.
-      vim.api.nvim_set_keymap(
-        "n",
-        "<leader>zf",
-        "<Cmd>ZkNotes { sort = { 'modified' }, match = { vim.fn.input('Search: ') } }<CR>",
-        opts
-      )
-      vim.api.nvim_set_keymap("n", "gd", "<Cmd>lua vim.lsp.buf.definition()<CR>", opts)
-      vim.api.nvim_set_keymap("n", "<leader>zb", "<Cmd>ZkBacklinks<CR>", opts)
-      vim.api.nvim_set_keymap("n", "<leader>zl", "<Cmd>ZkLinks<CR>", opts)
-      vim.api.nvim_set_keymap("v", "<leader>zf", ":'<,'>ZkMatch<CR>", opts)
-      -- vim.api.nvim_set_keymap("v", "<leader>zt", ":lua zk_wrapper('ZkNewFromTitleSelection')", opts)
-      -- vim.api.nvim_set_keymap("v", "<leader>zc", ":lua zk_wrapper('ZkNewFromContentSelection')", opts)
     end,
   },
 }
