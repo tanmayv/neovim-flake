@@ -598,6 +598,8 @@ function M.show_startup_help()
     vim.api.nvim_buf_set_option(bufnr, "bufhidden", "hide")
     vim.api.nvim_buf_set_option(bufnr, "buftype", "nofile")
   end
+end
+
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
   
