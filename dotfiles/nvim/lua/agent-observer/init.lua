@@ -4,6 +4,7 @@ M.config = {
   vcs_adapter = "git", -- default
   expand_level = 2, -- default expand level
   show_hidden = false, -- default show hidden files
+  poll_interval = 60, -- default polling interval in seconds
 }
 
 M.active_session_files = {}
@@ -597,8 +598,6 @@ function M.show_startup_help()
     vim.api.nvim_buf_set_option(bufnr, "bufhidden", "hide")
     vim.api.nvim_buf_set_option(bufnr, "buftype", "nofile")
   end
-end
-
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
   
@@ -609,6 +608,8 @@ function M.setup(opts)
   M.start_watcher()
   M.update_vcs_state()
 
+  M.seconds_to_update = M.config.poll_interval
+
   -- Start polling timer
   local uv = vim.uv or vim.loop
   M.poll_timer = uv.new_timer()
@@ -616,7 +617,7 @@ function M.setup(opts)
     M.seconds_to_update = M.seconds_to_update - 1
     if M.seconds_to_update <= 0 then
       M.update_vcs_state()
-      M.seconds_to_update = 60
+      M.seconds_to_update = M.config.poll_interval
     else
       M.render_ui()
     end
