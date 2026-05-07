@@ -41,6 +41,11 @@ function M.update_vcs_state()
   handle:close()
   
   if is_git ~= "true" then
+    M.pending_files = {}
+    M.last_commit_files = {}
+    vim.schedule(function()
+      M.render_ui()
+    end)
     return
   end
 
@@ -329,6 +334,10 @@ function M.stop_watcher()
 end
 
 function M.open_diff(file, keep_focus)
+  if not M.win_id or not vim.api.nvim_win_is_valid(M.win_id) then
+    return
+  end
+
   local state = M.file_state[file]
   local status = state and state.vcs_status or ""
   status = vim.trim(status)
