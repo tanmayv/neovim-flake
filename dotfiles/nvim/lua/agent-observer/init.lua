@@ -856,7 +856,12 @@ function M.setup(opts)
     M.toggle_diff()
   end, {})
 
-  M.base_dir = get_current_working_dir()
+  local env_base = os.getenv("AGENT_OBSERVER_BASE_DIR")
+  if env_base and env_base ~= "" then
+    M.base_dir = env_base
+  else
+    M.base_dir = get_current_working_dir()
+  end
   M.git_root = get_git_root(M.base_dir)
 
   M.start_watcher()
