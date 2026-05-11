@@ -24,6 +24,7 @@ M.loading_last = false
 M.loading_diff_file = nil
 M.seconds_to_update = 60
 M.poll_timer = nil
+M.vcs_label = nil
 
 -- Helper to get git root
 local function get_git_root(dir)
@@ -281,8 +282,12 @@ function M.render_ui()
 
   local status_text = M.auto_mode and " 🟢 Auto" or " 🔴 Manual"
   status_text = status_text .. " | Base: " .. base_display
-  if not M.git_root then
-    status_text = status_text .. " [Non-Git]"
+  local vcs_label = M.vcs_label
+  if not vcs_label and not M.git_root then
+    vcs_label = "Non-Git"
+  end
+  if vcs_label then
+    status_text = status_text .. " [" .. vcs_label .. "]"
   end
   if M.loading_pending or M.loading_last then
     status_text = status_text .. " ⏳"
