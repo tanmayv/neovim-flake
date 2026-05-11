@@ -319,7 +319,7 @@ function M.render_ui()
   local watched_nodes = {}
   if M.watched_paths and #M.watched_paths > 0 then
     for _, path in ipairs(M.watched_paths) do
-      table.insert(watched_nodes, NuiTree.Node({ text = path, is_file = true }))
+      table.insert(watched_nodes, NuiTree.Node({ text = path, is_file = false }))
     end
   else
     table.insert(watched_nodes, NuiTree.Node({ text = "No paths being watched", is_file = true }))
@@ -362,7 +362,7 @@ function M.render_ui()
             hl = "DiagnosticOk" -- Green (or String if DiagnosticOk not available)
           end
           local text = node.text
-          if node.path == M.loading_diff_file then
+          if node.path and node.path == M.loading_diff_file then
             text = text .. " ⏳"
           end
           line:append("    " .. text, hl)
