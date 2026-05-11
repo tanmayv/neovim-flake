@@ -65,6 +65,18 @@ local function get_relative_path(path, base)
   return path
 end
 
+-- Check if a path is hidden (always ignores .git, respects show_hidden config for others)
+local function is_hidden_path(path)
+  if not path then return false end
+  if path:match("/%.git/") or path:match("^%.git/") or path:match("/%.git$") or path:match("^%.git$") then
+    return true
+  end
+  if not M.config.show_hidden then
+    return path:match("/%.") ~= nil or path:match("^%.") ~= nil
+  end
+  return false
+end
+
 M.pending_files = {}
 M.last_commit_files = {}
 M.file_state = {} -- path -> { opened = bool, deleted = bool }
@@ -501,6 +513,11 @@ function M.open_diff(file, keep_focus)
     return
   end
 
+  -- Guard against hidden paths
+  if is_hidden_path(file) then
+    return
+  end
+
   -- Guard against directories
   if vim.fn.isdirectory(file) == 1 or file:match("/$") then
     return
@@ -659,6 +676,11 @@ function M.toggle_diff()
   local function open_file(mode, keep_focus)
     local node = M.tree:get_node()
     if node and node.is_file and node.path then
+      -- Guard against hidden paths
+      if is_hidden_path(node.path) then
+        return
+      end
+
       -- Guard against directories
       if vim.fn.isdirectory(node.path) == 1 or node.path:match("/$") then
         return
