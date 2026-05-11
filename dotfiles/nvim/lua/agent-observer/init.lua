@@ -26,8 +26,9 @@ M.seconds_to_update = 60
 M.poll_timer = nil
 
 -- Helper to get git root
-local function get_git_root()
-  local handle = io.popen("git rev-parse --show-toplevel 2>/dev/null")
+local function get_git_root(dir)
+  dir = dir or vim.fn.getcwd()
+  local handle = io.popen("git -C " .. vim.fn.shellescape(dir) .. " rev-parse --show-toplevel 2>/dev/null")
   if not handle then return nil end
   local result = handle:read("*l")
   handle:close()
@@ -74,20 +75,15 @@ function M.reset_base_dir()
     return
   end
 
-  -- Check if inside git repo
-  local handle = io.popen("git rev-parse --show-toplevel 2>/dev/null")
-  local git_root = handle and handle:read("*l")
-  if handle then handle:close() end
-
-  if not git_root then
-    vim.notify("Cannot sync base directory: " .. new_cwd .. " is not inside a Git repository.", vim.log.levels.ERROR)
-    return
-  end
-
+  local git_root = get_git_root(new_cwd)
   M.git_root = git_root
   M.base_dir = new_cwd
   
-  vim.notify("Synced Agent Observer base to: " .. M.base_dir, vim.log.levels.INFO)
+  local msg = "Synced Agent Observer base to: " .. M.base_dir
+  if not git_root then
+    msg = msg .. " (Non-Git Mode)"
+  end
+  vim.notify(msg, vim.log.levels.INFO)
 
   M.stop_watcher()
   M.active_session_files = {}
@@ -285,6 +281,9 @@ function M.render_ui()
 
   local status_text = M.auto_mode and " 🟢 Auto" or " 🔴 Manual"
   status_text = status_text .. " | Base: " .. base_display
+  if not M.git_root then
+    status_text = status_text .. " [Non-Git]"
+  end
   if M.loading_pending or M.loading_last then
     status_text = status_text .. " ⏳"
   else
@@ -506,7 +505,7 @@ function M.open_diff(file, keep_focus)
   local status = state and state.vcs_status or ""
   status = vim.trim(status)
   
-  if status == "??" or status == "?" or status == "A" then
+  if not M.git_root or status == "??" or status == "?" or status == "A" then
     vim.schedule(function()
       -- Close other windows in the tab
       local current_tab = vim.api.nvim_get_current_tabpage()
@@ -831,7 +830,7 @@ function M.setup(opts)
   end, {})
 
   M.base_dir = get_current_working_dir()
-  M.git_root = get_git_root()
+  M.git_root = get_git_root(M.base_dir)
 
   M.start_watcher()
   M.update_vcs_state()
