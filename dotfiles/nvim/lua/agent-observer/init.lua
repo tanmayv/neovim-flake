@@ -11,7 +11,8 @@ M.active_session_files = {}
 M.buf_id = nil
 M.win_id = nil
 M.main_win_id = nil
-M.watcher = nil
+M.watchers = {}
+M.watched_paths = {}
 M.tab_id = nil
 M.tree = nil
 M.auto_mode = true
@@ -132,6 +133,25 @@ local function get_dir_and_file(path)
     return table.concat(parts, "/") .. "/", file
   end
 end
+
+local function get_directories(dir, dirs)
+  dirs = dirs or {}
+  local uv = vim.uv or vim.loop
+  local handle = uv.fs_scandir(dir)
+  if not handle then return dirs end
+
+  while true do
+    local name, type = uv.fs_scandir_next(handle)
+    if not name then break end
+    if type == "directory" and name ~= ".git" then
+      local path = dir .. "/" .. name
+      table.insert(dirs, path)
+      get_directories(path, dirs)
+    end
+  end
+  return dirs
+end
+
 
 local function build_tree_nodes(files, category)
   local NuiTree = require("nui.tree")
@@ -271,52 +291,63 @@ function M.render_ui()
   M.tree:render()
 end
 
-function M.start_watcher()
-  if M.watcher then return end
+local function watch_dir(dir_path)
+  if M.watchers[dir_path] then return end
 
   local uv = vim.uv or vim.loop
-  M.watcher = uv.new_fs_event()
+  local watcher = uv.new_fs_event()
   
-  local path = vim.fn.getcwd()
-  
-  M.watcher:start(path, { recursive = true }, function(err, filename, events)
+  watcher:start(dir_path, {}, function(err, filename, events)
     if err then
       vim.schedule(function()
-        vim.notify("Observer error: " .. err, vim.log.levels.ERROR)
+        vim.notify("Observer error on " .. dir_path .. ": " .. err, vim.log.levels.ERROR)
       end)
       return
     end
     
-    if filename and not filename:match("^%.git/") then
+    if filename then
+      local full_path = dir_path .. "/" .. filename
+      local cwd = uv.cwd()
+      local relative_path = full_path
+      if full_path:sub(1, #cwd) == cwd then
+        relative_path = full_path:sub(#cwd + 2) -- +2 to skip trailing slash
+      end
+
+      if relative_path:match("^%.git/") then return end
+
       vim.schedule(function()
-        -- Add to active session if not already there
-        local found = false
-        for _, f in ipairs(M.active_session_files) do
-          if f == filename then
-            found = true
-            break
-          end
-        end
-        
-        local full_path = path .. "/" .. filename
         local stat = uv.fs_stat(full_path)
         local is_dir = stat and stat.type == "directory"
         local deleted = not stat
 
-        M.file_state[filename] = { opened = false, deleted = deleted }
+        if is_dir and not deleted then
+          watch_dir(full_path)
+          M.watched_paths = vim.tbl_keys(M.watchers)
+          table.sort(M.watched_paths)
+          M.render_ui()
+          return
+        end
+
+        M.file_state[relative_path] = { opened = false, deleted = deleted }
+
+        local found = false
+        for _, f in ipairs(M.active_session_files) do
+          if f == relative_path then
+            found = true
+            break
+          end
+        end
 
         if not found and not is_dir then
-          table.insert(M.active_session_files, 1, filename) -- prepend
+          table.insert(M.active_session_files, 1, relative_path)
         end
-        -- Fetch fresh git status and last commit asynchronously
+
         M.update_vcs_state()
 
-        if M.auto_mode and not is_dir then
-          M.open_diff(filename, true)
+        if M.auto_mode and not is_dir and not deleted then
+          M.open_diff(relative_path, true)
         end
 
-        -- Check if the file is open in any buffer and reload it
-        local full_path = path .. "/" .. filename
         local bufnr = vim.fn.bufnr(full_path)
         if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
           vim.cmd("checktime " .. bufnr)
@@ -324,13 +355,35 @@ function M.start_watcher()
       end)
     end
   end)
+
+  M.watchers[dir_path] = watcher
+end
+
+function M.start_watcher()
+  M.watchers = M.watchers or {}
+  local cwd = vim.fn.getcwd()
+  watch_dir(cwd)
+  
+  local dirs = get_directories(cwd)
+  for _, dir in ipairs(dirs) do
+    watch_dir(dir)
+  end
+
+  M.watched_paths = vim.tbl_keys(M.watchers)
+  table.sort(M.watched_paths)
+  vim.schedule(function()
+    M.render_ui()
+  end)
 end
 
 function M.stop_watcher()
-  if M.watcher then
-    M.watcher:stop()
-    M.watcher = nil
+  if M.watchers then
+    for path, watcher in pairs(M.watchers) do
+      watcher:stop()
+    end
   end
+  M.watchers = {}
+  M.watched_paths = {}
 end
 
 function M.open_diff(file, keep_focus)
