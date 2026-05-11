@@ -34,12 +34,41 @@ local function get_git_root()
   return result
 end
 
+-- Get CWD of the main editing window, fallback to global CWD
+local function get_current_working_dir()
+  if M.main_win_id and vim.api.nvim_win_is_valid(M.main_win_id) then
+    local ok, cwd = pcall(vim.fn.getcwd, M.main_win_id)
+    if ok and cwd then
+      return cwd
+    end
+  end
+  return vim.fn.getcwd()
+end
+
+-- Robust subpath check (handles directory boundaries correctly)
+local function is_subpath(path, base)
+  if not path or not base then return false end
+  local r_path = path:gsub("/$", "") .. "/"
+  local r_base = base:gsub("/$", "") .. "/"
+  return r_path:sub(1, #r_base) == r_base
+end
+
+-- Safely convert absolute path to relative path based on base directory
+local function get_relative_path(path, base)
+  if not path or not base then return path end
+  if is_subpath(path, base) then
+    local r_base = base:gsub("/$", "")
+    return path:sub(#r_base + 2)
+  end
+  return path
+end
+
 M.pending_files = {}
 M.last_commit_files = {}
 M.file_state = {} -- path -> { opened = bool, deleted = bool }
 
 function M.reset_base_dir()
-  local new_cwd = vim.fn.getcwd()
+  local new_cwd = get_current_working_dir()
   if new_cwd == M.base_dir then
     vim.notify("Base directory is already synced to CWD", vim.log.levels.INFO)
     return
@@ -92,7 +121,7 @@ function M.update_vcs_state()
           local file = line:sub(4)
           local abs_path = M.git_root .. "/" .. file
           -- Filter by base_dir and skip directories (paths ending with /)
-          if not file:match("/$") and abs_path:sub(1, #M.base_dir) == M.base_dir then
+          if not file:match("/$") and is_subpath(abs_path, M.base_dir) then
             table.insert(result, abs_path)
             M.file_state[abs_path] = M.file_state[abs_path] or {}
             M.file_state[abs_path].vcs_status = status
@@ -118,7 +147,7 @@ function M.update_vcs_state()
       for line in vim.gsplit(obj.stdout, "\n") do
         if line ~= "" then
           local abs_path = M.git_root .. "/" .. line
-          if abs_path:sub(1, #M.base_dir) == M.base_dir then
+          if is_subpath(abs_path, M.base_dir) then
             table.insert(result, abs_path)
           end
         end
@@ -140,10 +169,7 @@ function M.get_base_content(file, callback)
     return
   end
 
-  local rel_path = file
-  if file:sub(1, #M.git_root) == M.git_root then
-    rel_path = file:sub(#M.git_root + 2)
-  end
+  local rel_path = get_relative_path(file, M.git_root)
 
   local cmd = { "git", "show", "HEAD:" .. rel_path }
   
@@ -195,10 +221,7 @@ local function build_tree_nodes(files, category)
   local dir_groups = {}
   
   for _, file in ipairs(files) do
-    local rel_path = file
-    if M.base_dir and file:sub(1, #M.base_dir) == M.base_dir then
-      rel_path = file:sub(#M.base_dir + 2)
-    end
+    local rel_path = get_relative_path(file, M.base_dir)
 
     -- Use rel_path to check if hidden (at the base_dir level)
     if M.config.show_hidden or not rel_path:match("^%.") then
@@ -251,7 +274,7 @@ function M.render_ui()
   local root_nodes = {}
 
   -- CWD vs Base Dir Status
-  local cwd = vim.fn.getcwd()
+  local cwd = get_current_working_dir()
   local base_display = M.base_dir or "nil"
   local home = os.getenv("HOME")
   if home then
@@ -440,7 +463,7 @@ end
 
 function M.start_watcher()
   M.watchers = M.watchers or {}
-  local base = M.base_dir or vim.fn.getcwd()
+  local base = M.base_dir or get_current_working_dir()
   M.base_dir = base
   watch_dir(base)
   
@@ -807,7 +830,7 @@ function M.setup(opts)
     M.toggle_diff()
   end, {})
 
-  M.base_dir = vim.fn.getcwd()
+  M.base_dir = get_current_working_dir()
   M.git_root = get_git_root()
 
   M.start_watcher()
