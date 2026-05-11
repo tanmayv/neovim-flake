@@ -5,6 +5,7 @@ M.config = {
   expand_level = 2, -- default expand level
   show_hidden = false, -- default show hidden files
   poll_interval = 60, -- default polling interval in seconds
+  track_hidden = false, -- default: do not track hidden directories
 }
 
 M.active_session_files = {}
@@ -13,6 +14,8 @@ M.win_id = nil
 M.main_win_id = nil
 M.watchers = {}
 M.watched_paths = {}
+M.base_dir = nil
+M.git_root = nil
 M.tab_id = nil
 M.tree = nil
 M.auto_mode = true
@@ -35,13 +38,37 @@ M.pending_files = {}
 M.last_commit_files = {}
 M.file_state = {} -- path -> { opened = bool, deleted = bool }
 
-function M.update_vcs_state()
-  -- Check if in git repo first
-  local handle = io.popen("git rev-parse --is-inside-work-tree 2>/dev/null")
-  local is_git = handle:read("*l")
-  handle:close()
+function M.reset_base_dir()
+  local new_cwd = vim.fn.getcwd()
+  if new_cwd == M.base_dir then
+    vim.notify("Base directory is already synced to CWD", vim.log.levels.INFO)
+    return
+  end
+
+  -- Check if inside git repo
+  local handle = io.popen("git rev-parse --show-toplevel 2>/dev/null")
+  local git_root = handle and handle:read("*l")
+  if handle then handle:close() end
+
+  if not git_root then
+    vim.notify("Cannot sync base directory: " .. new_cwd .. " is not inside a Git repository.", vim.log.levels.ERROR)
+    return
+  end
+
+  M.git_root = git_root
+  M.base_dir = new_cwd
   
-  if is_git ~= "true" then
+  vim.notify("Synced Agent Observer base to: " .. M.base_dir, vim.log.levels.INFO)
+
+  M.stop_watcher()
+  M.active_session_files = {}
+  M.file_state = {}
+  M.start_watcher()
+  M.update_vcs_state()
+end
+
+function M.update_vcs_state()
+  if not M.git_root then
     M.pending_files = {}
     M.last_commit_files = {}
     vim.schedule(function()
@@ -55,7 +82,7 @@ function M.update_vcs_state()
   M.render_ui()
 
   -- Async git status
-  vim.system({ "git", "status", "--porcelain" }, { text = true }, function(obj)
+  vim.system({ "git", "status", "--porcelain", "-u" }, { text = true, cwd = M.base_dir }, function(obj)
     M.loading_pending = false
     if obj.code == 0 then
       local result = {}
@@ -63,9 +90,13 @@ function M.update_vcs_state()
         if #line > 3 then
           local status = line:sub(1, 2)
           local file = line:sub(4)
-          table.insert(result, file)
-          M.file_state[file] = M.file_state[file] or {}
-          M.file_state[file].vcs_status = status
+          local abs_path = M.git_root .. "/" .. file
+          -- Filter by base_dir and skip directories (paths ending with /)
+          if not file:match("/$") and abs_path:sub(1, #M.base_dir) == M.base_dir then
+            table.insert(result, abs_path)
+            M.file_state[abs_path] = M.file_state[abs_path] or {}
+            M.file_state[abs_path].vcs_status = status
+          end
         end
       end
       M.pending_files = result
@@ -80,13 +111,16 @@ function M.update_vcs_state()
   end)
 
   -- Async git last commit
-  vim.system({ "git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD" }, { text = true }, function(obj)
+  vim.system({ "git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD" }, { text = true, cwd = M.base_dir }, function(obj)
     M.loading_last = false
     if obj.code == 0 then
       local result = {}
       for line in vim.gsplit(obj.stdout, "\n") do
         if line ~= "" then
-          table.insert(result, line)
+          local abs_path = M.git_root .. "/" .. line
+          if abs_path:sub(1, #M.base_dir) == M.base_dir then
+            table.insert(result, abs_path)
+          end
         end
       end
       M.last_commit_files = result
@@ -102,18 +136,18 @@ function M.update_vcs_state()
 end
 
 function M.get_base_content(file, callback)
-  -- Check if in git repo first
-  local handle = io.popen("git rev-parse --is-inside-work-tree 2>/dev/null")
-  local is_git = handle:read("*l")
-  handle:close()
-  
-  if is_git ~= "true" then
+  if not M.git_root then
     return
   end
 
-  local cmd = { "git", "show", "HEAD:" .. file }
+  local rel_path = file
+  if file:sub(1, #M.git_root) == M.git_root then
+    rel_path = file:sub(#M.git_root + 2)
+  end
+
+  local cmd = { "git", "show", "HEAD:" .. rel_path }
   
-  vim.system(cmd, { text = true }, function(obj)
+  vim.system(cmd, { text = true, cwd = M.base_dir }, function(obj)
     if obj.code == 0 then
       callback(obj.stdout)
     else
@@ -144,9 +178,12 @@ local function get_directories(dir, dirs)
     local name, type = uv.fs_scandir_next(handle)
     if not name then break end
     if type == "directory" and name ~= ".git" then
-      local path = dir .. "/" .. name
-      table.insert(dirs, path)
-      get_directories(path, dirs)
+      local is_hidden = name:match("^%.")
+      if M.config.track_hidden or not is_hidden then
+        local path = dir .. "/" .. name
+        table.insert(dirs, path)
+        get_directories(path, dirs)
+      end
     end
   end
   return dirs
@@ -158,8 +195,14 @@ local function build_tree_nodes(files, category)
   local dir_groups = {}
   
   for _, file in ipairs(files) do
-    if M.config.show_hidden or not file:match("^%.") then
-      local dir, filename = get_dir_and_file(file)
+    local rel_path = file
+    if M.base_dir and file:sub(1, #M.base_dir) == M.base_dir then
+      rel_path = file:sub(#M.base_dir + 2)
+    end
+
+    -- Use rel_path to check if hidden (at the base_dir level)
+    if M.config.show_hidden or not rel_path:match("^%.") then
+      local dir, filename = get_dir_and_file(rel_path)
       if not dir_groups[dir] then
         dir_groups[dir] = {}
       end
@@ -207,14 +250,36 @@ function M.render_ui()
 
   local root_nodes = {}
 
-  -- Auto Mode Status
-  local status_text = M.auto_mode and " [Auto Mode: ON]" or " [Auto Mode: OFF]"
+  -- CWD vs Base Dir Status
+  local cwd = vim.fn.getcwd()
+  local base_display = M.base_dir or "nil"
+  local home = os.getenv("HOME")
+  if home then
+    if base_display:sub(1, #home) == home then
+      base_display = "~" .. base_display:sub(#home + 1)
+    end
+  end
+
+  local status_text = M.auto_mode and " 🟢 Auto" or " 🔴 Manual"
+  status_text = status_text .. " | Base: " .. base_display
   if M.loading_pending or M.loading_last then
     status_text = status_text .. " ⏳"
   else
-    status_text = status_text .. " [Next update: " .. M.seconds_to_update .. "s]"
+    status_text = status_text .. " [" .. M.seconds_to_update .. "s]"
   end
   table.insert(root_nodes, NuiTree.Node({ text = status_text, is_status = true }))
+
+  if cwd ~= M.base_dir then
+    local cwd_display = cwd
+    if home and cwd_display:sub(1, #home) == home then
+      cwd_display = "~" .. cwd_display:sub(#home + 1)
+    end
+    table.insert(root_nodes, NuiTree.Node({ 
+      text = " ⚠️ CWD changed to: " .. cwd_display .. " (Press 'C' to sync)", 
+      is_status = true,
+      is_warning = true 
+    }))
+  end
 
   -- Active Session
   local active_node = NuiTree.Node({ text = "Active Session", is_category = true, category_type = "active", _is_expanded = true }, build_tree_nodes(M.active_session_files, "active"))
@@ -248,7 +313,11 @@ function M.render_ui()
         local NuiLine = require("nui.line")
         local line = NuiLine()
         if node.is_status then
-          line:append(node.text, "Keyword")
+          local hl = "Keyword"
+          if node.is_warning then
+            hl = "DiagnosticWarn"
+          end
+          line:append(node.text, hl)
         elseif node.is_category then
           local hl = "Title"
           if node.category_type == "active" then
@@ -307,45 +376,55 @@ local function watch_dir(dir_path)
     
     if filename then
       local full_path = dir_path .. "/" .. filename
-      local cwd = uv.cwd()
-      local relative_path = full_path
-      if full_path:sub(1, #cwd) == cwd then
-        relative_path = full_path:sub(#cwd + 2) -- +2 to skip trailing slash
-      end
-
-      if relative_path:match("^%.git/") then return end
+      if full_path:match("/%.git/") then return end
 
       vim.schedule(function()
         local stat = uv.fs_stat(full_path)
         local is_dir = stat and stat.type == "directory"
         local deleted = not stat
 
-        if is_dir and not deleted then
-          watch_dir(full_path)
+        -- Handle deleted watched directory
+        if M.watchers[full_path] and deleted then
+          M.watchers[full_path]:stop()
+          if not M.watchers[full_path]:is_closing() then
+            M.watchers[full_path]:close()
+          end
+          M.watchers[full_path] = nil
           M.watched_paths = vim.tbl_keys(M.watchers)
           table.sort(M.watched_paths)
           M.render_ui()
           return
         end
 
-        M.file_state[relative_path] = { opened = false, deleted = deleted }
+        if is_dir and not deleted then
+          local is_hidden = filename:match("^%.")
+          if filename ~= ".git" and (M.config.track_hidden or not is_hidden) then
+            watch_dir(full_path)
+            M.watched_paths = vim.tbl_keys(M.watchers)
+            table.sort(M.watched_paths)
+            M.render_ui()
+          end
+          return
+        end
+
+        M.file_state[full_path] = { opened = false, deleted = deleted }
 
         local found = false
         for _, f in ipairs(M.active_session_files) do
-          if f == relative_path then
+          if f == full_path then
             found = true
             break
           end
         end
 
         if not found and not is_dir then
-          table.insert(M.active_session_files, 1, relative_path)
+          table.insert(M.active_session_files, 1, full_path)
         end
 
         M.update_vcs_state()
 
         if M.auto_mode and not is_dir and not deleted then
-          M.open_diff(relative_path, true)
+          M.open_diff(full_path, true)
         end
 
         local bufnr = vim.fn.bufnr(full_path)
@@ -361,10 +440,11 @@ end
 
 function M.start_watcher()
   M.watchers = M.watchers or {}
-  local cwd = vim.fn.getcwd()
-  watch_dir(cwd)
+  local base = M.base_dir or vim.fn.getcwd()
+  M.base_dir = base
+  watch_dir(base)
   
-  local dirs = get_directories(cwd)
+  local dirs = get_directories(base)
   for _, dir in ipairs(dirs) do
     watch_dir(dir)
   end
@@ -380,6 +460,9 @@ function M.stop_watcher()
   if M.watchers then
     for path, watcher in pairs(M.watchers) do
       watcher:stop()
+      if not watcher:is_closing() then
+        watcher:close()
+      end
     end
   end
   M.watchers = {}
@@ -388,6 +471,11 @@ end
 
 function M.open_diff(file, keep_focus)
   if not M.win_id or not vim.api.nvim_win_is_valid(M.win_id) then
+    return
+  end
+
+  -- Guard against directories
+  if vim.fn.isdirectory(file) == 1 or file:match("/$") then
     return
   end
 
@@ -439,6 +527,12 @@ function M.open_diff(file, keep_focus)
 
   M.get_base_content(file, function(base_content)
     vim.schedule(function()
+      -- Verify window is still valid
+      if not M.win_id or not vim.api.nvim_win_is_valid(M.win_id) then
+        M.loading_diff_file = nil
+        return
+      end
+
       M.loading_diff_file = nil
       M.render_ui()
       
@@ -538,6 +632,11 @@ function M.toggle_diff()
   local function open_file(mode, keep_focus)
     local node = M.tree:get_node()
     if node and node.is_file and node.path then
+      -- Guard against directories
+      if vim.fn.isdirectory(node.path) == 1 or node.path:match("/$") then
+        return
+      end
+
       if node.deleted then
         M.open_diff(node.path, keep_focus)
         return
@@ -588,6 +687,11 @@ function M.toggle_diff()
 
   -- o to open in main pane and keep focus
   vim.keymap.set("n", "o", function() open_file("edit", true) end, opts)
+  
+  -- C to sync base dir to current CWD
+  vim.keymap.set("n", "C", function()
+    M.reset_base_dir()
+  end, opts)
   
   -- Enter to open in main pane and move focus
   vim.keymap.set("n", "<CR>", function() open_file("edit", false) end, opts)
@@ -690,9 +794,21 @@ end
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
   
+  -- Clean up existing timer if setup is called again
+  if M.poll_timer then
+    M.poll_timer:stop()
+    if not M.poll_timer:is_closing() then
+      M.poll_timer:close()
+    end
+    M.poll_timer = nil
+  end
+
   vim.api.nvim_create_user_command("AgentObserverToggle", function()
     M.toggle_diff()
   end, {})
+
+  M.base_dir = vim.fn.getcwd()
+  M.git_root = get_git_root()
 
   M.start_watcher()
   M.update_vcs_state()
