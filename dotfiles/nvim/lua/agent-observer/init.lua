@@ -72,7 +72,8 @@ local function is_hidden_path(path)
     return true
   end
   if not M.config.show_hidden then
-    return path:match("/%.") ~= nil or path:match("^%.") ~= nil
+    local filename = path:match("[^/]+$")
+    return filename ~= nil and filename:match("^%.") ~= nil
   end
   return false
 end
@@ -232,13 +233,13 @@ local function build_tree_nodes(files, category)
   for _, file in ipairs(files) do
     local rel_path = get_relative_path(file, M.base_dir)
 
-    -- Use rel_path to check if hidden (at the base_dir level)
-    if M.config.show_hidden or not rel_path:match("^%.") then
-      local dir, filename = get_dir_and_file(rel_path)
+    local filename = rel_path:match("[^/]+$") or rel_path
+    if M.config.show_hidden or not filename:match("^%.") then
+      local dir, file_name = get_dir_and_file(rel_path)
       if not dir_groups[dir] then
         dir_groups[dir] = {}
       end
-      table.insert(dir_groups[dir], { filename = filename, full_path = file })
+      table.insert(dir_groups[dir], { filename = file_name, full_path = file })
     end
   end
   
@@ -530,8 +531,11 @@ function M.open_diff(file, keep_focus)
   if not M.git_root or status == "??" or status == "?" or status == "A" then
     vim.schedule(function()
       -- Close other windows in the tab
-      local current_tab = vim.api.nvim_get_current_tabpage()
-      local wins = vim.api.nvim_tabpage_list_wins(current_tab)
+      local target_tab = M.tab_id
+      if not target_tab or not vim.api.nvim_tabpage_is_valid(target_tab) then
+        target_tab = vim.api.nvim_get_current_tabpage()
+      end
+      local wins = vim.api.nvim_tabpage_list_wins(target_tab)
       for _, w in ipairs(wins) do
         if w ~= M.win_id then
           pcall(vim.api.nvim_win_close, w, true)
@@ -539,15 +543,15 @@ function M.open_diff(file, keep_focus)
       end
 
       -- Now only M.win_id is left, it fills the screen.
-      -- We want to restore it to width 35 on the right.
-      -- So we create a new window on the left.
+      -- We want to restore it to height 10 at the bottom.
+      -- So we create a new window above it.
       vim.api.nvim_set_current_win(M.win_id)
-      vim.cmd("leftabove vsplit")
+      vim.cmd("leftabove split")
       local working_win = vim.api.nvim_get_current_win()
       M.main_win_id = working_win
       
-      -- Set width of observer back to 35
-      vim.api.nvim_win_set_width(M.win_id, 35)
+      -- Set height of observer back to 10
+      vim.api.nvim_win_set_height(M.win_id, 10)
 
       -- Now set up file in working_win
       vim.api.nvim_set_current_win(working_win)
@@ -581,8 +585,11 @@ function M.open_diff(file, keep_focus)
       M.render_ui()
       
       -- Close other windows in the tab
-      local current_tab = vim.api.nvim_get_current_tabpage()
-      local wins = vim.api.nvim_tabpage_list_wins(current_tab)
+      local target_tab = M.tab_id
+      if not target_tab or not vim.api.nvim_tabpage_is_valid(target_tab) then
+        target_tab = vim.api.nvim_get_current_tabpage()
+      end
+      local wins = vim.api.nvim_tabpage_list_wins(target_tab)
       for _, w in ipairs(wins) do
         if w ~= M.win_id then
           pcall(vim.api.nvim_win_close, w, true)
@@ -590,14 +597,14 @@ function M.open_diff(file, keep_focus)
       end
 
       -- Now only M.win_id is left, it fills the screen.
-      -- We want to restore it to width 35 on the right.
-      -- So we create a new window on the left.
+      -- We want to restore it to height 10 at the bottom.
+      -- So we create a new window above it.
       vim.api.nvim_set_current_win(M.win_id)
-      vim.cmd("leftabove vsplit")
+      vim.cmd("leftabove split")
       local working_win = vim.api.nvim_get_current_win()
       
-      -- Set width of observer back to 35
-      vim.api.nvim_win_set_width(M.win_id, 35)
+      -- Set height of observer back to 10
+      vim.api.nvim_win_set_height(M.win_id, 10)
 
       -- Now set up diff in working_win
       vim.api.nvim_set_current_win(working_win)
@@ -659,7 +666,7 @@ function M.toggle_diff()
   M.buf_id = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_option(M.buf_id, "filetype", "agent-observer")
 
-  vim.cmd("botright 35vsplit")
+  vim.cmd("botright 10split")
   M.win_id = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(M.win_id, M.buf_id)
 
@@ -710,9 +717,11 @@ function M.toggle_diff()
       end
 
       if not target_win or not vim.api.nvim_win_is_valid(target_win) then
-        vim.cmd("leftabove vsplit")
+        vim.api.nvim_set_current_win(M.win_id)
+        vim.cmd("leftabove split")
         target_win = vim.api.nvim_get_current_win()
         M.main_win_id = target_win
+        vim.api.nvim_win_set_height(M.win_id, 10)
       end
 
       vim.api.nvim_set_current_win(target_win)
