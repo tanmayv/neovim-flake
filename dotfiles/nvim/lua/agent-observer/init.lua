@@ -1,4 +1,5 @@
 local M = {}
+local vim = vim
 
 M.config = {
   vcs_adapter = "git", -- default
@@ -25,6 +26,7 @@ M.loading_diff_file = nil
 M.seconds_to_update = 60
 M.poll_timer = nil
 M.vcs_label = nil
+M.nav_diff_mode = false
 
 -- Helper to get git root
 local function get_git_root(dir)
@@ -55,6 +57,19 @@ local function is_subpath(path, base)
   return r_path:sub(1, #r_base) == r_base
 end
 
+local function normalize_path(path)
+  if not path or path == "" then return nil end
+  path = vim.fs.normalize(path)
+  return vim.fn.resolve(path)
+end
+
+local function attach_keys(bufnr, file)
+  local opts = { buffer = bufnr, noremap = true, silent = true }
+  vim.keymap.set("n", "<C-n>", function() M.navigate_files(1) end, opts)
+  vim.keymap.set("n", "<C-p>", function() M.navigate_files(-1) end, opts)
+  vim.b[bufnr].agent_observer_current_file = file
+end
+
 -- Safely convert absolute path to relative path based on base directory
 local function get_relative_path(path, base)
   if not path or not base then return path end
@@ -78,32 +93,19 @@ local function is_hidden_path(path)
   return false
 end
 
+M.is_hidden_path = is_hidden_path
+
 M.pending_files = {}
 M.last_commit_files = {}
 M.file_state = {} -- path -> { opened = bool, deleted = bool }
 
-function M.reset_base_dir()
-  local new_cwd = get_current_working_dir()
-  if new_cwd == M.base_dir then
-    vim.notify("Base directory is already synced to CWD", vim.log.levels.INFO)
-    return
-  end
-
-  local git_root = get_git_root(new_cwd)
-  M.git_root = git_root
-  M.base_dir = new_cwd
-  
-  local msg = "Synced Agent Observer base to: " .. M.base_dir
-  if not git_root then
-    msg = msg .. " (Non-Git Mode)"
-  end
-  vim.notify(msg, vim.log.levels.INFO)
-
-  M.stop_watcher()
-  M.active_session_files = {}
-  M.file_state = {}
-  M.start_watcher()
+function M.reset_base_dir(silent)
+  if not M.base_dir then return end
+  vim.fn.chdir(M.base_dir)
   M.update_vcs_state()
+  if not silent then
+    vim.notify("Reverted CWD to base: " .. M.base_dir, vim.log.levels.INFO)
+  end
 end
 
 function M.update_vcs_state()
@@ -176,6 +178,7 @@ end
 
 function M.get_base_content(file, callback)
   if not M.git_root then
+    callback("")
     return
   end
 
@@ -190,6 +193,7 @@ function M.get_base_content(file, callback)
       vim.schedule(function()
         vim.notify("Failed to get base content: " .. obj.stderr, vim.log.levels.ERROR)
       end)
+      callback("")
     end
   end)
 end
@@ -284,7 +288,6 @@ function M.render_ui()
   local root_nodes = {}
 
   -- CWD vs Base Dir Status
-  local cwd = get_current_working_dir()
   local base_display = M.base_dir or "nil"
   local home = os.getenv("HOME")
   if home then
@@ -309,17 +312,6 @@ function M.render_ui()
   end
   table.insert(root_nodes, NuiTree.Node({ text = status_text, is_status = true }))
 
-  if cwd ~= M.base_dir then
-    local cwd_display = cwd
-    if home and cwd_display:sub(1, #home) == home then
-      cwd_display = "~" .. cwd_display:sub(#home + 1)
-    end
-    table.insert(root_nodes, NuiTree.Node({ 
-      text = " ⚠️ CWD changed to: " .. cwd_display .. " (Press 'C' to sync)", 
-      is_status = true,
-      is_warning = true 
-    }))
-  end
 
   -- Active Session
   local active_node = NuiTree.Node({ text = "Active Session", is_category = true, category_type = "active", _is_expanded = true }, build_tree_nodes(M.active_session_files, "active"))
@@ -509,18 +501,54 @@ function M.stop_watcher()
   M.watched_paths = {}
 end
 
-function M.open_diff(file, keep_focus)
+function M.open_normal(file, keep_focus)
+  if not M.win_id or not vim.api.nvim_win_is_valid(M.win_id) then
+    return
+  end
+  if is_hidden_path(file) or vim.fn.isdirectory(file) == 1 or file:match("/$") then
+    return
+  end
+
+  vim.schedule(function()
+    local obs_tab = vim.api.nvim_win_get_tabpage(M.win_id)
+    vim.api.nvim_set_current_tabpage(obs_tab)
+
+    local wins = vim.api.nvim_tabpage_list_wins(obs_tab)
+    for _, w in ipairs(wins) do
+      if w ~= M.win_id then
+        pcall(vim.api.nvim_win_close, w, true)
+      end
+    end
+
+    vim.api.nvim_set_current_win(M.win_id)
+    vim.cmd("leftabove split")
+    local working_win = vim.api.nvim_get_current_win()
+    M.main_win_id = working_win
+
+    vim.api.nvim_win_set_height(M.win_id, 10)
+
+    vim.api.nvim_set_current_win(working_win)
+    vim.cmd("edit " .. vim.fn.fnameescape(file))
+
+    local bufnr = vim.api.nvim_get_current_buf()
+    vim.bo[bufnr].readonly = true
+    vim.bo[bufnr].modifiable = false
+    attach_keys(bufnr, file)
+
+    if keep_focus then
+      vim.api.nvim_set_current_win(M.win_id)
+    else
+      vim.api.nvim_set_current_win(working_win)
+    end
+  end)
+end
+
+function M.open_diff_custom(file, keep_focus)
   if not M.win_id or not vim.api.nvim_win_is_valid(M.win_id) then
     return
   end
 
-  -- Guard against hidden paths
-  if is_hidden_path(file) then
-    return
-  end
-
-  -- Guard against directories
-  if vim.fn.isdirectory(file) == 1 or file:match("/$") then
+  if is_hidden_path(file) or vim.fn.isdirectory(file) == 1 or file:match("/$") then
     return
   end
 
@@ -530,37 +558,31 @@ function M.open_diff(file, keep_focus)
   
   if not M.git_root or status == "??" or status == "?" or status == "A" then
     vim.schedule(function()
-      -- Close other windows in the tab
-      local target_tab = M.tab_id
-      if not target_tab or not vim.api.nvim_tabpage_is_valid(target_tab) then
-        target_tab = vim.api.nvim_get_current_tabpage()
-      end
-      local wins = vim.api.nvim_tabpage_list_wins(target_tab)
+      local obs_tab = vim.api.nvim_win_get_tabpage(M.win_id)
+      vim.api.nvim_set_current_tabpage(obs_tab)
+      
+      local wins = vim.api.nvim_tabpage_list_wins(obs_tab)
       for _, w in ipairs(wins) do
         if w ~= M.win_id then
           pcall(vim.api.nvim_win_close, w, true)
         end
       end
 
-      -- Now only M.win_id is left, it fills the screen.
-      -- We want to restore it to height 10 at the bottom.
-      -- So we create a new window above it.
       vim.api.nvim_set_current_win(M.win_id)
       vim.cmd("leftabove split")
       local working_win = vim.api.nvim_get_current_win()
       M.main_win_id = working_win
       
-      -- Set height of observer back to 10
       vim.api.nvim_win_set_height(M.win_id, 10)
 
-      -- Now set up file in working_win
       vim.api.nvim_set_current_win(working_win)
-      vim.cmd("edit " .. file)
+      vim.cmd("edit " .. vim.fn.fnameescape(file))
       
-      vim.bo.readonly = true
-      vim.bo.modifiable = false
+      local bufnr = vim.api.nvim_get_current_buf()
+      vim.bo[bufnr].readonly = true
+      vim.bo[bufnr].modifiable = false
+      attach_keys(bufnr, file)
       
-      -- Stay in working window or return to observer
       if keep_focus then
         vim.api.nvim_set_current_win(M.win_id)
       else
@@ -575,7 +597,6 @@ function M.open_diff(file, keep_focus)
 
   M.get_base_content(file, function(base_content)
     vim.schedule(function()
-      -- Verify window is still valid
       if not M.win_id or not vim.api.nvim_win_is_valid(M.win_id) then
         M.loading_diff_file = nil
         return
@@ -584,60 +605,52 @@ function M.open_diff(file, keep_focus)
       M.loading_diff_file = nil
       M.render_ui()
       
-      -- Close other windows in the tab
-      local target_tab = M.tab_id
-      if not target_tab or not vim.api.nvim_tabpage_is_valid(target_tab) then
-        target_tab = vim.api.nvim_get_current_tabpage()
-      end
-      local wins = vim.api.nvim_tabpage_list_wins(target_tab)
+      local obs_tab = vim.api.nvim_win_get_tabpage(M.win_id)
+      vim.api.nvim_set_current_tabpage(obs_tab)
+      
+      local wins = vim.api.nvim_tabpage_list_wins(obs_tab)
       for _, w in ipairs(wins) do
         if w ~= M.win_id then
           pcall(vim.api.nvim_win_close, w, true)
         end
       end
 
-      -- Now only M.win_id is left, it fills the screen.
-      -- We want to restore it to height 10 at the bottom.
-      -- So we create a new window above it.
       vim.api.nvim_set_current_win(M.win_id)
       vim.cmd("leftabove split")
       local working_win = vim.api.nvim_get_current_win()
       
-      -- Set height of observer back to 10
       vim.api.nvim_win_set_height(M.win_id, 10)
 
-      -- Now set up diff in working_win
       vim.api.nvim_set_current_win(working_win)
-      vim.cmd("edit " .. file)
+      vim.cmd("edit " .. vim.fn.fnameescape(file))
       
       local working_buf = vim.api.nvim_get_current_buf()
-      
-      -- Create split for base file
+      vim.bo[working_buf].readonly = true
+      vim.bo[working_buf].modifiable = false
+      attach_keys(working_buf, file)
+
       vim.cmd("vsplit")
       local base_win = vim.api.nvim_get_current_win()
       local base_buf = vim.api.nvim_create_buf(false, true)
       vim.api.nvim_win_set_buf(base_win, base_buf)
       
-      -- Set base content
       local lines = vim.split(base_content, "\n")
       vim.api.nvim_buf_set_lines(base_buf, 0, -1, false, lines)
       
-      -- Set filetype for syntax highlighting
       local ft = vim.filetype.match({ filename = file })
       if ft then
-        vim.api.nvim_buf_set_option(base_buf, "filetype", ft)
+        vim.bo[base_buf].filetype = ft
       end
       
       vim.bo[base_buf].readonly = true
       vim.bo[base_buf].modifiable = false
+      vim.bo[base_buf].bufhidden = "wipe"
       
-      -- Diff this!
       vim.api.nvim_set_current_win(working_win)
       vim.cmd("diffthis")
       vim.api.nvim_set_current_win(base_win)
       vim.cmd("diffthis")
       
-      -- Stay in working window or return to observer
       if keep_focus then
         vim.api.nvim_set_current_win(M.win_id)
       else
@@ -645,6 +658,82 @@ function M.open_diff(file, keep_focus)
       end
     end)
   end)
+end
+
+function M.open_diff(file, keep_focus, force_diff)
+  M.file_state[file] = M.file_state[file] or {}
+  M.file_state[file].opened = true
+  M.render_ui()
+
+  local active_win = vim.api.nvim_get_current_win()
+
+  if force_diff then
+    M.nav_diff_mode = true
+  elseif active_win == M.win_id then
+    M.nav_diff_mode = false
+  else
+    local current_buf = vim.api.nvim_get_current_buf()
+    local prev_file = vim.b[current_buf].agent_observer_current_file
+    local prev_state = prev_file and M.file_state[prev_file]
+    local prev_status = prev_state and prev_state.vcs_status or ""
+    prev_status = vim.trim(prev_status)
+    local prev_first_char = prev_status:sub(1, 1)
+    local prev_was_forced_normal = prev_first_char == "A" or prev_first_char == "?"
+    
+    if not prev_was_forced_normal then
+      M.nav_diff_mode = vim.wo.diff
+    end
+  end
+
+  local state = M.file_state[file]
+  local status = state and state.vcs_status or ""
+  status = vim.trim(status)
+  local first_char = status:sub(1, 1)
+  local can_diff = (M.git_root or M.vcs_label) and first_char ~= "A" and first_char ~= "?" and first_char ~= ""
+
+  local open_in_diff = force_diff or (M.nav_diff_mode and can_diff)
+
+  if open_in_diff then
+    M.open_diff_custom(file, keep_focus)
+  else
+    M.open_normal(file, keep_focus)
+  end
+end
+
+function M.navigate_files(direction)
+  if not M.pending_files or #M.pending_files == 0 then
+    return
+  end
+
+  local current_buf = vim.api.nvim_get_current_buf()
+  local current_file = vim.b[current_buf].agent_observer_current_file
+  if not current_file then
+    return
+  end
+
+  local idx = nil
+  for i, f in ipairs(M.pending_files) do
+    if f == current_file then
+      idx = i
+      break
+    end
+  end
+
+  if not idx then
+    idx = 1
+  else
+    idx = idx + direction
+    if idx < 1 then
+      idx = #M.pending_files
+    elseif idx > #M.pending_files then
+      idx = 1
+    end
+  end
+
+  local next_file = M.pending_files[idx]
+  if next_file then
+    M.open_diff(next_file, true)
+  end
 end
 
 function M.toggle_diff()
@@ -664,7 +753,7 @@ function M.toggle_diff()
   M.show_startup_help()
 
   M.buf_id = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_option(M.buf_id, "filetype", "agent-observer")
+  vim.bo[M.buf_id].filetype = "agent-observer"
 
   vim.cmd("botright 10split")
   M.win_id = vim.api.nvim_get_current_win()
@@ -679,72 +768,14 @@ function M.toggle_diff()
   M.update_vcs_state()
 
   local opts = { buffer = M.buf_id, noremap = true, silent = true }
-  
-  local function open_file(mode, keep_focus)
-    local node = M.tree:get_node()
-    if node and node.is_file and node.path then
-      -- Guard against hidden paths
-      if is_hidden_path(node.path) then
-        return
-      end
-
-      -- Guard against directories
-      if vim.fn.isdirectory(node.path) == 1 or node.path:match("/$") then
-        return
-      end
-
-      if node.deleted then
-        M.open_diff(node.path, keep_focus)
-        return
-      end
-
-      -- Mark as opened
-      M.file_state[node.path] = M.file_state[node.path] or {}
-      M.file_state[node.path].opened = true
-      M.render_ui()
-
-      local target_win = M.main_win_id
-      
-      if not target_win or not vim.api.nvim_win_is_valid(target_win) then
-        local current_tab = vim.api.nvim_get_current_tabpage()
-        local wins = vim.api.nvim_tabpage_list_wins(current_tab)
-        for _, w in ipairs(wins) do
-          if w ~= M.win_id then
-            target_win = w
-            break
-          end
-        end
-      end
-
-      if not target_win or not vim.api.nvim_win_is_valid(target_win) then
-        vim.api.nvim_set_current_win(M.win_id)
-        vim.cmd("leftabove split")
-        target_win = vim.api.nvim_get_current_win()
-        M.main_win_id = target_win
-        vim.api.nvim_win_set_height(M.win_id, 10)
-      end
-
-      vim.api.nvim_set_current_win(target_win)
-
-      if mode == "edit" then
-        vim.cmd("edit " .. node.path)
-      elseif mode == "split" then
-        vim.cmd("split " .. node.path)
-      elseif mode == "vsplit" then
-        vim.cmd("vsplit " .. node.path)
-      end
-      
-      vim.bo.readonly = true
-      vim.bo.modifiable = false
-      
-      if keep_focus then
-        vim.api.nvim_set_current_win(M.win_id)
-      end
-    end
-  end
 
   -- o to open in main pane and keep focus
-  vim.keymap.set("n", "o", function() open_file("edit", true) end, opts)
+  vim.keymap.set("n", "o", function()
+    local node = M.tree:get_node()
+    if node and node.is_file and node.path then
+      M.open_diff(node.path, true, false)
+    end
+  end, opts)
   
   -- C to sync base dir to current CWD
   vim.keymap.set("n", "C", function()
@@ -752,19 +783,18 @@ function M.toggle_diff()
   end, opts)
   
   -- Enter to open in main pane and move focus
-  vim.keymap.set("n", "<CR>", function() open_file("edit", false) end, opts)
-
-  -- s to open in horizontal split and move focus
-  vim.keymap.set("n", "s", function() open_file("split", false) end, opts)
-
-  -- v to open in vertical split and move focus
-  vim.keymap.set("n", "v", function() open_file("vsplit", false) end, opts)
+  vim.keymap.set("n", "<CR>", function()
+    local node = M.tree:get_node()
+    if node and node.is_file and node.path then
+      M.open_diff(node.path, false, false)
+    end
+  end, opts)
 
   -- d to open diff and keep focus
   vim.keymap.set("n", "d", function()
     local node = M.tree:get_node()
     if node and node.is_file and node.path then
-      M.open_diff(node.path, true)
+      M.open_diff(node.path, true, true)
     end
   end, opts)
 
@@ -822,8 +852,6 @@ function M.show_startup_help()
     "| --- | --- | --- |",
     "| `o` | Open file in main pane | Stays on Observer |",
     "| `<CR>` | Open file in main pane | Moves to file |",
-    "| `s` | Open file in horizontal split | Moves to split |",
-    "| `v` | Open file in vertical split | Moves to split |",
     "| `d` | Open diff against HEAD | Stays on Observer |",
     "| `l` | Expand/Collapse tree node | - |",
     "| `h` | Toggle hidden files | - |",
@@ -843,9 +871,9 @@ function M.show_startup_help()
 
   if buf_name == "" and line_count == 1 and first_line == "" then
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-    vim.api.nvim_buf_set_option(bufnr, "filetype", "markdown")
-    vim.api.nvim_buf_set_option(bufnr, "bufhidden", "hide")
-    vim.api.nvim_buf_set_option(bufnr, "buftype", "nofile")
+    vim.bo[bufnr].filetype = "markdown"
+    vim.bo[bufnr].bufhidden = "hide"
+    vim.bo[bufnr].buftype = "nofile"
   end
 end
 
@@ -890,6 +918,23 @@ function M.setup(opts)
       M.render_ui()
     end
   end))
+
+  -- CWD Reversion Autocommand
+  local group = vim.api.nvim_create_augroup("AgentObserverCWDReversion", { clear = true })
+  vim.api.nvim_create_autocmd("DirChanged", {
+    group = group,
+    callback = function()
+      local event = vim.v.event
+      local event_cwd = normalize_path(event.cwd)
+      local base_path = normalize_path(M.base_dir)
+      if event_cwd and base_path and event_cwd ~= base_path then
+        M.reset_base_dir(true)
+      end
+    end,
+  })
+
+  -- Align CWD on startup
+  M.reset_base_dir(true)
 end
 
 return M
