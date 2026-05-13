@@ -2,6 +2,39 @@
 
 with lib;
 
+let
+  neovimPackages = with pkgs; [
+    # Core CLI tools used by plugins
+    git
+    gcc
+    sqlite
+    unzip
+    cargo
+    ripgrep
+    fd
+    fzf
+    nodejs
+    zsh
+    tmux
+    sc-im
+    zk
+
+    # Language servers / formatters from Nix instead of Mason
+    lua-language-server
+    clang-tools
+    gopls
+    zls
+    rust-analyzer
+    typescript-language-server
+    basedpyright
+    bash-language-server
+    nixd
+    sqls
+    stylua
+    shfmt
+    python3Packages.debugpy
+  ];
+in
 {
   options.neovim = {
     enable = mkOption {
@@ -21,18 +54,11 @@ with lib;
           plugin = pkgs.vimPlugins.sqlite-lua;
         }
       ];
+      extraPackages = neovimPackages;
     };
 
-    # 2. Install Neovim and AstroVim dependencies
-    home.packages = with pkgs; [
-      gcc
-      sqlite
-      unzip
-      cargo
-      ripgrep  # For Telescope
-      fd       # For Telescope
-      nodejs   # Required by some LSPs / Mason
-    ];
+    # 2. Keep the same tools available in the user shell too
+    home.packages = neovimPackages;
 
     # 3. Link AstroVim's configuration into ~/.config/nvim
     xdg.configFile = {
