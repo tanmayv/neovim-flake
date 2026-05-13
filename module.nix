@@ -10,6 +10,7 @@ let
     sqlite
     unzip
     cargo
+    tree-sitter
     ripgrep
     fd
     fzf
